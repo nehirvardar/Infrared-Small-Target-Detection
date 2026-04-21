@@ -4,8 +4,9 @@ def parse_args():
     """Training Options for Segmentation Experiments"""
     parser = argparse.ArgumentParser(description='Dense_Nested_Attention_Network_For_SIRST')
     # choose model
-    parser.add_argument('--model', type=str, default='DNANet',
-                        help='model name: DNANet')
+    parser.add_argument('--model', type=str, default='DNANet_vers2',
+                        choices=['DNANet', 'DNANet_vers1', 'DNANet_vers2', 'DNANet_vers3'],
+                        help='model name: DNANet, DNANet_vers1 (Speed), DNANet_vers2 (Accuracy), DNANet_vers3 (Hybrid)')
     # parameter for DNANet
     parser.add_argument('--channel_size', type=str, default='three',
                         help='one,  two,  three,  four')

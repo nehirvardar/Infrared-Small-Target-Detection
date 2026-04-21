@@ -15,8 +15,11 @@ from model.load_param_data import  load_dataset, load_param
 
 # Model
 from model.model_DNANet import  Res_CBAM_block
-from model.model_ACM    import  ACM
+#from model.model_ACM    import  ACM
 from model.model_DNANet import  DNANet
+from model.model_DNANet_vers1 import  DNANet_vers1
+from model.model_DNANet_vers2 import  DNANet_vers2
+from model.model_DNANet_vers3 import  DNANet_vers3
 
 class Trainer(object):
     def __init__(self, args):
@@ -28,7 +31,7 @@ class Trainer(object):
         self.PD_FA = PD_FA(1,10)
         self.mIoU  = mIoU(1)
         self.save_prefix = '_'.join([args.model, args.dataset])
-        self.save_dir    = args.save_dir
+        self.save_dir    = "Maske"
         nb_filter, num_blocks = load_param(args.channel_size, args.backbone)
 
         # Read image index from TXT
@@ -44,10 +47,28 @@ class Trainer(object):
         self.test_data  = DataLoader(dataset=testset,  batch_size=args.test_batch_size, num_workers=args.workers,drop_last=False)
 
         # Choose and load model (this paper is finished by one GPU)
-        if args.model   == 'DNANet':
-            model       = DNANet(num_classes=1,input_channels=args.in_channels, block=Res_CBAM_block, num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
-        elif args.model == 'ACM':
-            model       = ACM   (args.in_channels, layers=[args.blocks] * 3, fuse_mode=args.fuse_mode, tiny=False, classes=1)
+        if args.model == 'DNANet':
+            from model.model_DNANet import DNANet, Res_CBAM_block
+            model = DNANet(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block,
+                           num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+
+        elif args.model == 'DNANet_vers1':
+            from model.model_DNANet_vers1 import DNANet_vers1, Res_CBAM_block as Res_CBAM_block_v1
+            model = DNANet_vers1(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block_v1,
+                                 num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+
+        elif args.model == 'DNANet_vers2':
+            from model.model_DNANet_vers2 import DNANet_vers2, Res_CBAM_block as Res_CBAM_block_v2
+            model = DNANet_vers2(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block_v2,
+                                 num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+
+        elif args.model == 'DNANet_vers3':
+            from model.model_DNANet_vers3 import DNANet_vers3, Res_CBAM_block as Res_CBAM_block_v2
+            model = DNANet_vers3(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block_v2,
+                                 num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+
+        #elif args.model == 'ACM':
+           # model       = ACM   (args.in_channels, layers=[args.blocks] * 3, fuse_mode=args.fuse_mode, tiny=False, classes=1)
         model           = model.cuda()
         model.apply(weights_init_xavier)
         print("Model Initializing")
@@ -58,10 +79,9 @@ class Trainer(object):
         self.best_precision = [0,0,0,0,0,0,0,0,0,0,0]
 
         # Checkpoint
-        checkpoint        = torch.load('D:\\Infrared-small-target\\code\\IR_detection_simple\\result\\' + args.model_dir)
-        target_image_path = dataset_dir + '\\' +'visulization_result' + '\\' + args.st_model + '_visulization_result'
-        target_dir        = dataset_dir + '\\' +'visulization_result' + '\\' + args.st_model + '_visulization_fuse'
-
+        checkpoint = torch.load(args.st_model, weights_only=False)
+        target_image_path = 'maske_resimleri_tek'
+        target_dir = 'maske_resimleri_birlestirilmis'
         make_visulization_dir(target_image_path, target_dir)
 
         # Load trained model
@@ -98,13 +118,13 @@ class Trainer(object):
                 _, mean_IOU = self.mIoU.get()
             FA, PD = self.PD_FA.get(len(val_img_ids))
             test_loss = losses.avg
-            scio.savemat(dataset_dir + '\\' +  'value_result'+ '\\' +args.st_model  + '_PD_FA_' + str(255),
+            scio.savemat('final_rapor.mat',
                          {'number_record1': FA, 'number_record2': PD})
 
             print('test_loss, %.4f' % (test_loss))
             print('mean_IOU:', mean_IOU)
             self.best_iou = mean_IOU
-            save_result_for_test(dataset_dir, args.st_model,args.epochs, self.best_iou, recall, precision)
+            save_result_for_test(dataset_dir, 'rapor',args.epochs, self.best_iou, recall, precision)
 
 
             source_image_path = dataset_dir + '\\images'

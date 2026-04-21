@@ -15,6 +15,10 @@ from model.load_param_data import  load_dataset, load_param
 # model
 from model.model_DNANet import  Res_CBAM_block
 from model.model_DNANet import  DNANet
+from model.model_DNANet_vers1 import  DNANet_vers1
+from model.model_DNANet_vers2 import  DNANet_vers2
+from model.model_DNANet_vers3 import  DNANet_vers3
+
 
 class Trainer(object):
     def __init__(self, args):
@@ -41,8 +45,25 @@ class Trainer(object):
         self.test_data  = DataLoader(dataset=testset,  batch_size=args.test_batch_size, num_workers=args.workers,drop_last=False)
 
         # Choose and load model (this paper is finished by one GPU)
-        if args.model   == 'DNANet':
-            model       = DNANet(num_classes=1,input_channels=args.in_channels, block=Res_CBAM_block, num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+        if args.model == 'DNANet':
+            from model.model_DNANet import DNANet, Res_CBAM_block
+            model = DNANet(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block,
+                           num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+
+        elif args.model == 'DNANet_vers1':
+            from model.model_DNANet_vers1 import DNANet_vers1, Res_CBAM_block as Res_CBAM_block_v1
+            model = DNANet_vers1(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block_v1,
+                                 num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+
+        elif args.model == 'DNANet_vers2':
+            from model.model_DNANet_vers2 import DNANet_vers2, Res_CBAM_block as Res_CBAM_block_v2
+            model = DNANet_vers2(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block_v2,
+                                 num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+
+        elif args.model == 'DNANet_vers3':
+            from model.model_DNANet_vers3 import DNANet_vers3, Res_CBAM_block as Res_CBAM_block_v2
+            model = DNANet_vers3(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block_v2,
+                                 num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
 
         model           = model.cuda()
         model.apply(weights_init_xavier)

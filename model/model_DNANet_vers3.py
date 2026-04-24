@@ -37,7 +37,6 @@ class TripleConvStem(nn.Module):
 class VGG_CBAM_Block(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
-        # VERS1 DEĞİŞİKLİĞİ 2: nn.Conv2d yerine DepthwiseSeparableConv kullandık
         self.conv1 = DepthwiseSeparableConv(in_channels, out_channels, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)

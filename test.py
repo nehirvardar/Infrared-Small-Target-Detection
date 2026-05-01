@@ -19,6 +19,8 @@ from model.model_DNANet import  DNANet
 from model.model_DNANet_vers1 import  DNANet_vers1
 from model.model_DNANet_vers2 import  DNANet_vers2
 from model.model_DNANet_vers3 import  DNANet_vers3
+from model.model_DNANet_vers4 import  DNANet_vers4
+from model.model_DNANet_vers5 import  DNANet_vers5
 
 class Trainer(object):
     def __init__(self, args):
@@ -60,14 +62,30 @@ class Trainer(object):
                                  num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
 
         elif args.model == 'DNANet_vers3':
-            from model.model_DNANet_vers3 import DNANet_vers3, Res_CBAM_block as Res_CBAM_block_v2
-            model = DNANet_vers3(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block_v2,
+            from model.model_DNANet_vers3 import DNANet_vers3, Res_CBAM_block as Res_CBAM_block_v3
+            model = DNANet_vers3(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block_v3,
+                                 num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+
+        elif args.model == 'DNANet_vers4':
+            from model.model_DNANet_vers4 import DNANet_vers4, Res_ECA_block
+            model = DNANet_vers4(num_classes=1, input_channels=args.in_channels, block=Res_ECA_block,
+                                 num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+
+        elif args.model == 'DNANet_vers5':
+            from model.model_DNANet_vers5 import DNANet_vers5, Res_CBAM_block as Res_CBAM_block_v5
+            model = DNANet_vers5(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block_v5,
                                  num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
 
         model           = model.cuda()
         model.apply(weights_init_xavier)
         print("Model Initializing")
         self.model      = model
+
+        # Loss function
+        if args.loss == 'TverskyLoss':
+            self.loss_fn = TverskyLoss
+        else:
+            self.loss_fn = SoftIoULoss
 
         # Initialize evaluation metrics
         self.best_recall    = [0,0,0,0,0,0,0,0,0,0,0]
@@ -90,12 +108,12 @@ class Trainer(object):
                     preds = self.model(data)
                     loss = 0
                     for pred in preds:
-                        loss += SoftIoULoss(pred, labels)
+                        loss += self.loss_fn(pred, labels)
                     loss /= len(preds)
                     pred =preds[-1]
                 else:
                     pred = self.model(data)
-                    loss = SoftIoULoss(pred, labels)
+                    loss = self.loss_fn(pred, labels)
                 num += 1
 
                 losses.    update(loss.item(), pred.size(0))

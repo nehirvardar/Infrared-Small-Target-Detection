@@ -5,8 +5,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Dense_Nested_Attention_Network_For_SIRST')
     # choose model
     parser.add_argument('--model', type=str, default='DNANet_vers2',
-                        choices=['DNANet', 'DNANet_vers1', 'DNANet_vers2', 'DNANet_vers3'],
-                        help='model name: DNANet, DNANet_vers1 (Speed), DNANet_vers2 (Accuracy), DNANet_vers3 (Hybrid)')
+                        choices=['DNANet', 'DNANet_vers1', 'DNANet_vers2', 'DNANet_vers3', 'DNANet_vers4', 'DNANet_vers5'],
+                        help='model name: DNANet, DNANet_vers1 (Speed), DNANet_vers2 (Accuracy), DNANet_vers3 (Hybrid), DNANet_vers4 (Lightweight/ECA), DNANet_vers5 (ASPP)')
 
     # parameter for DNANet
     parser.add_argument('--channel_size', type=str, default='three',
@@ -14,6 +14,9 @@ def parse_args():
     parser.add_argument('--backbone', type=str, default='resnet_18',
                         help='vgg10, resnet_10,  resnet_18,  resnet_34 ')
     parser.add_argument('--deep_supervision', type=str, default='True', help='True or False (model==DNANet)')
+    parser.add_argument('--loss', type=str, default='SoftIoULoss',
+                        choices=['SoftIoULoss', 'TverskyLoss'],
+                        help='loss function: SoftIoULoss, TverskyLoss')
 
 
     # data and pre-process

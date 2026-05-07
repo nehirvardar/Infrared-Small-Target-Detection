@@ -92,7 +92,7 @@ class Trainer(object):
         self.best_precision = [0,0,0,0,0,0,0,0,0,0,0]
 
         # Load trained model
-        checkpoint        = torch.load('result/' + args.model_dir)
+        checkpoint        = torch.load('result/' + args.model_dir, weights_only=False)
         self.model.load_state_dict(checkpoint['state_dict'])
 
         # Test

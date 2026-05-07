@@ -16,6 +16,7 @@ from model.load_param_data import  load_dataset, load_param
 # Model
 from model.model_DNANet import  Res_CBAM_block
 #from model.model_ACM    import  ACM
+
 from model.model_DNANet import  DNANet
 from model.model_DNANet_vers1 import  DNANet_vers1
 from model.model_DNANet_vers2 import  DNANet_vers2
@@ -67,6 +68,16 @@ class Trainer(object):
             model = DNANet_vers3(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block_v2,
                                  num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
 
+        elif args.model == 'DNANet_vers4':
+            from model.model_DNANet_vers4 import DNANet_vers4, Res_ECA_block
+            model = DNANet_vers4(num_classes=1, input_channels=args.in_channels, block=Res_ECA_block,
+                                 num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+
+        elif args.model == 'DNANet_vers5':
+            from model.model_DNANet_vers5 import DNANet_vers5, Res_CBAM_block as Res_CBAM_block_v5
+            model = DNANet_vers5(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block_v5,
+                                 num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+
         #elif args.model == 'ACM':
            # model       = ACM   (args.in_channels, layers=[args.blocks] * 3, fuse_mode=args.fuse_mode, tiny=False, classes=1)
         model           = model.cuda()
@@ -79,9 +90,9 @@ class Trainer(object):
         self.best_precision = [0,0,0,0,0,0,0,0,0,0,0]
 
         # Checkpoint
-        checkpoint = torch.load(args.st_model, weights_only=False)
-        target_image_path = 'maske_resimleri_tek'
-        target_dir = 'maske_resimleri_birlestirilmis'
+        checkpoint = torch.load(args.model_dir, weights_only=False)
+        target_image_path = 'mask_images_DNANet_vers5'
+        target_dir = 'mask_images_concat'
         make_visulization_dir(target_image_path, target_dir)
 
         # Load trained model

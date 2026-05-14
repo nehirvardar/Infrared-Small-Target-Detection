@@ -335,13 +335,18 @@ def total_visulization_generation(dataset_dir, mode, test_txt, suffix, target_im
 
 
 def make_visulization_dir(target_image_path, target_dir):
-    if os.path.exists(target_image_path):
-        shutil.rmtree(target_image_path)  # 删除目录，包括目录下的所有文件
-    os.mkdir(target_image_path)
-
-    if os.path.exists(target_dir):
-        shutil.rmtree(target_dir)  # 删除目录，包括目录下的所有文件
-    os.mkdir(target_dir)
+    import time as _time
+    for path in [target_image_path, target_dir]:
+        if os.path.exists(path):
+            for attempt in range(5):
+                try:
+                    shutil.rmtree(path)
+                    break
+                except PermissionError:
+                    _time.sleep(1)
+            else:
+                shutil.rmtree(path, ignore_errors=True)
+        os.makedirs(path, exist_ok=True)
 
 def save_Pred_GT(pred, labels, target_image_path, val_img_ids, num, suffix):
 

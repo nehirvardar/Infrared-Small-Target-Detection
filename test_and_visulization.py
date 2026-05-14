@@ -2,6 +2,9 @@
 from tqdm             import tqdm
 from model.parse_args_test import  parse_args
 import scipy.io as scio
+import time
+import csv
+import os
 
 # Torch and visulization
 from torchvision      import transforms
@@ -85,13 +88,17 @@ class Trainer(object):
         print("Model Initializing")
         self.model      = model
 
+        # ===================== Model Parameter Count =====================
+        self.param_count = count_param(self.model)
+        print(f"Model Parameters: {self.param_count:,}")
+
         # Evaluation metrics
         self.best_recall    = [0,0,0,0,0,0,0,0,0,0,0]
         self.best_precision = [0,0,0,0,0,0,0,0,0,0,0]
 
         # Checkpoint
         checkpoint = torch.load(args.model_dir, weights_only=False)
-        target_image_path = 'mask_images_DNANet_vers5'
+        target_image_path = 'mask_images_' + args.model
         target_dir = 'mask_images_concat'
         make_visulization_dir(target_image_path, target_dir)
 
@@ -102,11 +109,21 @@ class Trainer(object):
         self.model.eval()
         tbar = tqdm(self.test_data)
         losses = AverageMeter()
+
+        # ===================== FPS Measurement =====================
+        total_time = 0.0
+        total_samples = 0
+
         with torch.no_grad():
             num = 0
             for i, ( data, labels) in enumerate(tbar):
                 data = data.cuda()
                 labels = labels.cuda()
+
+                # Measure inference time
+                torch.cuda.synchronize()
+                start_time = time.time()
+
                 if args.deep_supervision == 'True':
                     preds = self.model(data)
                     loss = 0
@@ -117,6 +134,13 @@ class Trainer(object):
                 else:
                     pred = self.model(data)
                     loss = SoftIoULoss(pred, labels)
+
+                torch.cuda.synchronize()
+                end_time = time.time()
+
+                total_time += (end_time - start_time)
+                total_samples += data.size(0)
+
                 save_Pred_GT(pred, labels,target_image_path, val_img_ids, num, args.suffix)
                 num += 1
 
@@ -135,44 +159,106 @@ class Trainer(object):
             print('test_loss, %.4f' % (test_loss))
             print('mean_IOU:', mean_IOU)
             self.best_iou = mean_IOU
+
+            # ===================== Compute Final Metrics =====================
+            # recall and precision are arrays (one per threshold bin)
+            # Take the best (max) value across thresholds as the representative score
+            best_recall    = float(np.max(recall))
+            best_precision = float(np.max(precision))
+
+            # mAP score: use the area under precision-recall curve (trapezoidal)
+            # Sort by recall for proper AUC computation
+            sorted_indices = np.argsort(recall)
+            sorted_recall    = recall[sorted_indices]
+            sorted_precision = precision[sorted_indices]
+            mAP_score = float(np.trapezoid(sorted_precision, sorted_recall))
+
+            # FPS (frames per second) and it/s (iterations per second)
+            fps = total_samples / total_time if total_time > 0 else 0.0
+            its = len(self.test_data) / total_time if total_time > 0 else 0.0  # iterations per second
+
+            print(f"Best Recall:    {best_recall:.4f}")
+            print(f"Best Precision: {best_precision:.4f}")
+            print(f"mAP Score:      {mAP_score:.4f}")
+            print(f"mIoU:           {mean_IOU:.4f}")
+            print(f"FPS:            {fps:.2f}")
+            print(f"it/s:           {its:.2f}")
+            print(f"Parameters:     {self.param_count:,}")
+
+            # ===================== Save CSV Report =====================
+            csv_filename = f"test_report_{args.model}_{args.dataset}.csv"
+            csv_path = os.path.join(os.getcwd(), csv_filename)
+
+            file_exists = os.path.isfile(csv_path)
+            with open(csv_path, 'a', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                if not file_exists:
+                    writer.writerow([
+                        'Model',
+                        'Dataset',
+                        'Parameters',
+                        'Precision',
+                        'Recall',
+                        'mAP_Score',
+                        'mIoU',
+                        'FPS (it/s)',
+                        'Test_Loss'
+                    ])
+                writer.writerow([
+                    args.model,
+                    args.dataset,
+                    self.param_count,
+                    f"{best_precision:.6f}",
+                    f"{best_recall:.6f}",
+                    f"{mAP_score:.6f}",
+                    f"{mean_IOU:.6f}",
+                    f"{fps:.2f}",
+                    f"{test_loss:.6f}"
+                ])
+
+            print(f"\n>>> CSV report saved to: {csv_path}")
+
             save_result_for_test(dataset_dir, 'rapor',args.epochs, self.best_iou, recall, precision)
 
-
-            source_image_path = dataset_dir + '\\images'
-            if args.mode == 'TXT':
-                txt_path = test_txt
-                ids = []
-                with open(txt_path, 'r') as f:
-                    ids += [line.strip() for line in f.readlines()]
-
-            for i in range(len(ids)):
-                source_image = source_image_path + '\\' + ids[i] + args.suffix
-                target_image = target_image_path + '\\' + ids[i] + args.suffix
-                shutil.copy(source_image, target_image)
-            for i in range(len(ids)):
-                source_image = target_image_path + '\\' + ids[i] + args.suffix
-                img = Image.open(source_image)
-                img = img.resize((256, 256), Image.ANTIALIAS)
-                img.save(source_image)
+            # =====================================================================
+            # OLD VISUALIZATION CODE (commented out, kept for reference)
+            # =====================================================================
+            # source_image_path = dataset_dir + '\\images'
+            # if args.mode == 'TXT':
+            #     txt_path = test_txt
+            #     ids = []
+            #     with open(txt_path, 'r') as f:
+            #         ids += [line.strip() for line in f.readlines()]
+            #
+            # for i in range(len(ids)):
+            #     source_image = source_image_path + '\\' + ids[i] + args.suffix
+            #     target_image = target_image_path + '\\' + ids[i] + args.suffix
+            #     shutil.copy(source_image, target_image)
+            # for i in range(len(ids)):
+            #     source_image = target_image_path + '\\' + ids[i] + args.suffix
+            #     img = Image.open(source_image)
+            #     img = img.resize((256, 256), Image.ANTIALIAS)
+            #     img.save(source_image)
             # for m in range(len(ids)):
-            #     plt.rcParams['font.sans-serif'] = ['STSong']  # 中文宋体
+            #     plt.rcParams['font.sans-serif'] = ['STSong']
             #     plt.figure(figsize=(10, 6))
             #     plt.subplot(1, 3, 1)
             #     img = plt.imread(target_image_path +'\\'+ ids[m] +args.suffix)
             #     plt.imshow(img,cmap = 'gray')
-            #     plt.xlabel("原始图像", size=11)
+            #     plt.xlabel("Raw Image", size=11)
             #
             #     plt.subplot(1, 3, 2)
             #     img = plt.imread(target_image_path +'\\'+ ids[m] + '_GT'+args.suffix)
             #     plt.imshow(img,cmap = 'gray')
-            #     plt.xlabel("真实结果", size=11)
+            #     plt.xlabel("Ground Truth", size=11)
             #
             #     plt.subplot(1, 3, 3)
             #     img = plt.imread(target_image_path +'\\'+ ids[m] + '_Pred'+args.suffix)
             #     plt.imshow(img,cmap = 'gray')
-            #     plt.xlabel("实验结果", size=11)
+            #     plt.xlabel("Prediction", size=11)
             #
             #     plt.savefig(target_dir +'\\'+ ids[m].split('.')[0] + "_fuse"+args.suffix, facecolor='w', edgecolor='red')
+            # =====================================================================
 
 
 def main(args):
@@ -181,8 +267,3 @@ def main(args):
 if __name__ == "__main__":
     args = parse_args()
     main(args)
-
-
-
-
-

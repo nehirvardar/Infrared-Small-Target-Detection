@@ -1,0 +1,2 @@
+Model,Dataset,Parameters,Precision,Recall,mAP_Score,mIoU,FPS (it/s),Test_Loss
+DNANet_vers5,NUAA-SIRST,5419064,0.824064,1.000000,0.416641,0.716094,14.41,0.469871

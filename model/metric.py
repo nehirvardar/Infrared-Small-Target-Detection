@@ -62,7 +62,7 @@ class PD_FA():
     def update(self, preds, labels):
 
         for iBin in range(self.bins+1):
-            score_thresh = iBin * (255/self.bins)
+            score_thresh = iBin * (1.0 / self.bins)
             predits  = np.array((preds > score_thresh).cpu()).astype('int64')
             predits  = np.reshape (predits,  (256,256))
             labelss = np.array((labels).cpu()).astype('int64') # P

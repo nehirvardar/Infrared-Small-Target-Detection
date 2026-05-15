@@ -161,31 +161,30 @@ class Trainer(object):
             self.best_iou = mean_IOU
 
             # ===================== Compute Final Metrics =====================
-            # recall and precision are arrays (one per threshold bin)
-            # Take the best (max) value across thresholds as the representative score
             best_recall    = float(np.max(recall))
             best_precision = float(np.max(precision))
 
-            # mAP score: use the area under precision-recall curve (trapezoidal)
-            # Sort by recall for proper AUC computation
             sorted_indices = np.argsort(recall)
             sorted_recall    = recall[sorted_indices]
             sorted_precision = precision[sorted_indices]
             mAP_score = float(np.trapezoid(sorted_precision, sorted_recall))
-
-            # FPS (frames per second) and it/s (iterations per second)
+            best_pd = float(np.max(PD))
+            representative_fa = float(np.mean(FA))
             fps = total_samples / total_time if total_time > 0 else 0.0
-            its = len(self.test_data) / total_time if total_time > 0 else 0.0  # iterations per second
+            its = len(self.test_data) / total_time if total_time > 0 else 0.0  
 
             print(f"Best Recall:    {best_recall:.4f}")
             print(f"Best Precision: {best_precision:.4f}")
             print(f"mAP Score:      {mAP_score:.4f}")
+            print(f"Probability of Detection:      {best_pd:.4f}")
+            print(f"False Alarm Rate:      {representative_fa:.4f}")
             print(f"mIoU:           {mean_IOU:.4f}")
             print(f"FPS:            {fps:.2f}")
             print(f"it/s:           {its:.2f}")
             print(f"Parameters:     {self.param_count:,}")
 
             # ===================== Save CSV Report =====================
+            
             csv_filename = f"test_report_{args.model}_{args.dataset}.csv"
             csv_path = os.path.join(os.getcwd(), csv_filename)
 
@@ -200,6 +199,8 @@ class Trainer(object):
                         'Precision',
                         'Recall',
                         'mAP_Score',
+                        'Best_Pd', 
+                        'Average_Fa',
                         'mIoU',
                         'FPS (it/s)',
                         'Test_Loss'
@@ -211,6 +212,8 @@ class Trainer(object):
                     f"{best_precision:.6f}",
                     f"{best_recall:.6f}",
                     f"{mAP_score:.6f}",
+                    f"{best_pd:.6f}",         
+                    f"{representative_fa:.8f}",
                     f"{mean_IOU:.6f}",
                     f"{fps:.2f}",
                     f"{test_loss:.6f}"

@@ -51,6 +51,9 @@ def parse_args():
                         metavar='N', help='input batch size for \
                         testing (default: 32)')
 
+    # smoke test: run only a single batch for quick checks
+    parser.add_argument('--smoke', action='store_true', help='Run single-batch smoke test')
+
     # cuda and logging
     parser.add_argument('--gpus', type=str, default='0',
                         help='Training with GPUs, you can specify 1,3 for example.')

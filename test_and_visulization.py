@@ -15,6 +15,7 @@ from model.utils import *
 from model.metric import *
 from model.loss import *
 from model.load_param_data import  load_dataset, load_param
+from model.coco_format import save_results_coco_json
 
 # Model
 from model.model_DNANet import  Res_CBAM_block
@@ -30,8 +31,7 @@ class Trainer(object):
 
         # Initial
         self.args  = args
-        self.ROC   = ROCMetric(1, args.ROC_thr)
-        # self.PD_FA = PD_FA(1,255)
+        self.BBox  = BoundingBoxMetric(10, iou_thresh=0.1)
         self.PD_FA = PD_FA(1,10)
         self.mIoU  = mIoU(1)
         self.save_prefix = '_'.join([args.model, args.dataset])
@@ -97,18 +97,34 @@ class Trainer(object):
         self.best_precision = [0,0,0,0,0,0,0,0,0,0,0]
 
         # Checkpoint
-        checkpoint = torch.load(args.model_dir, weights_only=False)
+        try:
+            checkpoint = torch.load(args.model_dir, weights_only=False)
+            # Load trained model if checkpoint contains state_dict
+            if 'state_dict' in checkpoint:
+                self.model.load_state_dict(checkpoint['state_dict'])
+                print(f"Loaded checkpoint: {args.model_dir}")
+            else:
+                print(f"Checkpoint loaded but no 'state_dict' key: {args.model_dir}")
+        except Exception as e:
+            print(f"Warning: could not load checkpoint '{args.model_dir}': {e}\nProceeding with randomly initialized weights.")
+
         target_image_path = 'mask_images_' + args.model
         target_dir = 'mask_images_concat'
         make_visulization_dir(target_image_path, target_dir)
 
-        # Load trained model
-        self.model.load_state_dict(checkpoint['state_dict'])
+        # Load trained model was attempted above; if checkpoint unavailable we continue with init weights
 
         # Test
         self.model.eval()
         tbar = tqdm(self.test_data)
         losses = AverageMeter()
+
+        # defaults (used in smoke mode when loop may break early)
+        recall = np.zeros(11)
+        precision = np.zeros(11)
+        bbox_recall = np.zeros(11)
+        bbox_precision = np.zeros(11)
+        mean_IOU = 0.0
 
         # ===================== FPS Measurement =====================
         total_time = 0.0
@@ -144,46 +160,53 @@ class Trainer(object):
                 save_Pred_GT(pred, labels,target_image_path, val_img_ids, num, args.suffix)
                 num += 1
 
+                # If smoke flag set, stop after first batch
+                if args.smoke:
+                    print("Smoke mode: processed one batch, exiting test loop.")
+                    break
+
                 losses.    update(loss.item(), pred.size(0))
-                self.ROC.  update(pred, labels)
+                self.BBox. update(pred, labels)
                 self.mIoU. update(pred, labels)
                 self.PD_FA.update(pred, labels)
 
-                ture_positive_rate, false_positive_rate, recall, precision= self.ROC.get()
+                bbox_recall, bbox_precision = self.BBox.get()
                 _, mean_IOU = self.mIoU.get()
             FA, PD = self.PD_FA.get(len(val_img_ids))
+            bbox_recall, bbox_precision = self.BBox.get()
             test_loss = losses.avg
-            scio.savemat('final_rapor.mat',
+            scio.savemat(f'final_rapor_{args.model}_{args.dataset}.mat',
                          {'number_record1': FA, 'number_record2': PD})
 
             print('test_loss, %.4f' % (test_loss))
             print('mean_IOU:', mean_IOU)
             self.best_iou = mean_IOU
 
-            # ===================== Compute Final Metrics =====================
-            # recall and precision are arrays (one per threshold bin)
+            # ===================== Compute Final Metrics (BBox-based as PRIMARY) =====================
+            # BBox recall and precision arrays (one per threshold bin)
             # Take the best (max) value across thresholds as the representative score
-            best_recall    = float(np.max(recall))
-            best_precision = float(np.max(precision))
+            best_recall    = float(np.max(bbox_recall))
+            best_precision = float(np.max(bbox_precision))
 
             # mAP score: use the area under precision-recall curve (trapezoidal)
             # Sort by recall for proper AUC computation
-            sorted_indices = np.argsort(recall)
-            sorted_recall    = recall[sorted_indices]
-            sorted_precision = precision[sorted_indices]
-            mAP_score = float(np.trapezoid(sorted_precision, sorted_recall))
+            bbox_sorted_indices = np.argsort(bbox_recall)
+            bbox_sorted_recall    = bbox_recall[bbox_sorted_indices]
+            bbox_sorted_precision = bbox_precision[bbox_sorted_indices]
+            mAP_score = float(np.trapezoid(bbox_sorted_precision, bbox_sorted_recall))
 
             # FPS (frames per second) and it/s (iterations per second)
             fps = total_samples / total_time if total_time > 0 else 0.0
             its = len(self.test_data) / total_time if total_time > 0 else 0.0  # iterations per second
 
-            print(f"Best Recall:    {best_recall:.4f}")
-            print(f"Best Precision: {best_precision:.4f}")
-            print(f"mAP Score:      {mAP_score:.4f}")
-            print(f"mIoU:           {mean_IOU:.4f}")
-            print(f"FPS:            {fps:.2f}")
-            print(f"it/s:           {its:.2f}")
-            print(f"Parameters:     {self.param_count:,}")
+            print(f"\n===== BOUNDING BOX METRICS (PRIMARY - IoU=0.1) =====")
+            print(f"BBox Best Recall:    {best_recall:.4f}")
+            print(f"BBox Best Precision: {best_precision:.4f}")
+            print(f"BBox mAP Score:      {mAP_score:.4f}")
+            print(f"mIoU (Pixel-level):  {mean_IOU:.4f}")
+            print(f"FPS:                 {fps:.2f}")
+            print(f"it/s:                {its:.2f}")
+            print(f"Parameters:          {self.param_count:,}")
 
             # ===================== Save CSV Report =====================
             csv_filename = f"test_report_{args.model}_{args.dataset}.csv"
@@ -197,11 +220,11 @@ class Trainer(object):
                         'Model',
                         'Dataset',
                         'Parameters',
-                        'Precision',
-                        'Recall',
-                        'mAP_Score',
+                        'BBox_Precision',
+                        'BBox_Recall',
+                        'BBox_mAP_Score',
                         'mIoU',
-                        'FPS (it/s)',
+                        'FPS',
                         'Test_Loss'
                     ])
                 writer.writerow([
@@ -218,7 +241,25 @@ class Trainer(object):
 
             print(f"\n>>> CSV report saved to: {csv_path}")
 
-            save_result_for_test(dataset_dir, 'rapor',args.epochs, self.best_iou, recall, precision)
+            save_result_for_test(dataset_dir, f'rapor_{args.model}', args.epochs, mAP_score, 
+                     bbox_recall, bbox_precision, None, None, mAP_score)
+            
+            # Save COCO JSON format results (BBox metrics as primary)
+            save_results_coco_json(
+                dataset_dir,
+                f'coco_results_{args.model}',
+                args.epochs,
+                mean_IOU,
+                bbox_recall,
+                bbox_precision,
+                None,
+                None,
+                mAP_score,
+                test_loss,
+                None,
+                create_plots=True,
+                use_bbox_as_primary=True
+            )
 
             # =====================================================================
             # OLD VISUALIZATION CODE (commented out, kept for reference)

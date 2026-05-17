@@ -212,3 +212,88 @@ def batch_intersection_union(output, target, nclass):
         "Error: Intersection area should be smaller than Union area"
     return area_inter, area_union
 
+def bbox_iou(boxA, boxB):
+    # box format: [min_row, min_col, max_row, max_col]
+    rA_min, cA_min, rA_max, cA_max = boxA
+    rB_min, cB_min, rB_max, cB_max = boxB
+
+    inter_rmin = max(rA_min, rB_min)
+    inter_cmin = max(cA_min, cB_min)
+    inter_rmax = min(rA_max, rB_max)
+    inter_cmax = min(cA_max, cB_max)
+
+    if inter_rmax > inter_rmin and inter_cmax > inter_cmin:
+        inter_area = (inter_rmax - inter_rmin) * (inter_cmax - inter_cmin)
+    else:
+        inter_area = 0
+
+    areaA = (rA_max - rA_min) * (cA_max - cA_min)
+    areaB = (rB_max - rB_min) * (cB_max - cB_min)
+    union_area = areaA + areaB - inter_area
+    if union_area == 0:
+        return 0
+    return inter_area / float(union_area)
+
+class BoundingBoxMetric():
+    def __init__(self, bins, iou_thresh=0.1):
+        super(BoundingBoxMetric, self).__init__()
+        self.bins = bins
+        self.iou_thresh = iou_thresh
+        self.tp_arr = np.zeros(self.bins+1)
+        self.fp_arr = np.zeros(self.bins+1)
+        self.fn_arr = np.zeros(self.bins+1)
+
+    def update(self, preds, labels):
+        # preds and labels have shape (B, 1, H, W)
+        for iBin in range(self.bins+1):
+            score_thresh = (iBin + 0.0) / self.bins
+            predits = (torch.sigmoid(preds) > score_thresh).cpu().numpy().astype('int64')
+            labelss = (labels > 0).cpu().numpy().astype('int64')
+            
+            batch_size = predits.shape[0]
+            for b in range(batch_size):
+                # Handle possible varying tensor shapes
+                if len(predits.shape) == 4:
+                    pred_img = predits[b, 0, :, :]
+                    label_img = labelss[b, 0, :, :]
+                elif len(predits.shape) == 3:
+                    pred_img = predits[b, :, :]
+                    label_img = labelss[b, :, :]
+                else:
+                    pred_img = predits
+                    label_img = labelss
+
+                image = measure.label(pred_img, connectivity=2)
+                coord_image = measure.regionprops(image)
+                
+                label_l = measure.label(label_img, connectivity=2)
+                coord_label = measure.regionprops(label_l)
+                
+                matched_preds = set()
+                matched_labels = set()
+                
+                for i_gt, props_gt in enumerate(coord_label):
+                    bbox_gt = props_gt.bbox
+                    for i_pred, props_pred in enumerate(coord_image):
+                        if i_pred in matched_preds:
+                            continue
+                        bbox_pred = props_pred.bbox
+                        iou = bbox_iou(bbox_pred, bbox_gt)
+                        if iou >= self.iou_thresh:
+                            matched_preds.add(i_pred)
+                            matched_labels.add(i_gt)
+                            break  # Move to next GT
+                            
+                self.tp_arr[iBin] += len(matched_preds)
+                self.fp_arr[iBin] += len(coord_image) - len(matched_preds)
+                self.fn_arr[iBin] += len(coord_label) - len(matched_labels)
+
+    def get(self):
+        precision = self.tp_arr / (self.tp_arr + self.fp_arr + 1e-6)
+        recall = self.tp_arr / (self.tp_arr + self.fn_arr + 1e-6)
+        return recall, precision
+
+    def reset(self):
+        self.tp_arr = np.zeros(self.bins+1)
+        self.fp_arr = np.zeros(self.bins+1)
+        self.fn_arr = np.zeros(self.bins+1)

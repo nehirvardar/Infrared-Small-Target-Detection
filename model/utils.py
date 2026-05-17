@@ -213,70 +213,109 @@ def save_train_log(args, save_dir):
             f.write('\n')
     return
 
-def save_model_and_result(dt_string, epoch,train_loss, test_loss, best_iou, recall, precision, save_mIoU_dir, save_other_metric_dir):
+def save_model_and_result(dt_string, epoch,train_loss, test_loss, best_metric, recall, precision, save_mIoU_dir, save_other_metric_dir, bbox_recall=None, bbox_precision=None, bbox_mAP=None):
 
     with open(save_mIoU_dir, 'a') as f:
-        f.write('{} - {:04d}:\t - train_loss: {:04f}:\t - test_loss: {:04f}:\t mIoU {:.4f}\n' .format(dt_string, epoch,train_loss, test_loss, best_iou))
+        f.write('{} - {:04d}:\t - train_loss: {:04f}:\t - test_loss: {:04f}:\t BBox_mAP {:.4f}\n' .format(dt_string, epoch,train_loss, test_loss, best_metric))
     with open(save_other_metric_dir, 'a') as f:
         f.write(dt_string)
         f.write('-')
         f.write(str(epoch))
         f.write('\n')
-        f.write('Recall-----:')
+        f.write('===== BOUNDING BOX METRICS (PRIMARY - IoU=0.1) =====\n')
+        f.write('BBox_Recall:')
         for i in range(len(recall)):
             f.write('   ')
             f.write(str(round(recall[i], 8)))
             f.write('   ')
         f.write('\n')
 
-        f.write('Precision--:')
+        f.write('BBox_Precision:')
         for i in range(len(precision)):
             f.write('   ')
             f.write(str(round(precision[i], 8)))
             f.write('   ')
         f.write('\n')
+        
+        if bbox_mAP is not None:
+            f.write('BBox_mAP: ')
+            f.write(str(round(bbox_mAP, 8)))
+            f.write('\n')
 
-def save_model(mean_IOU, best_iou, save_dir, save_prefix, train_loss, test_loss, recall, precision, epoch, net):
-    if mean_IOU > best_iou:
+def save_model(best_metric, best_iou, save_dir, save_prefix, train_loss, test_loss, recall, precision, epoch, net, bbox_mAP_score=None, mean_iou=None):
+    if best_metric > best_iou:
         save_mIoU_dir = 'result/' + save_dir + '/' + save_prefix + '_best_IoU_IoU.log'
         save_other_metric_dir = 'result/' + save_dir + '/' + save_prefix + '_best_IoU_other_metric.log'
+        value_result_dir = 'result/' + save_dir + '/value_result'
         now = datetime.now()
         dt_string = now.strftime("%d/%m/%Y %H:%M:%S")
-        best_iou = mean_IOU
+        best_iou = best_metric
+        
+        # Create value_result directory if not exists
+        import os
+        os.makedirs(value_result_dir, exist_ok=True)
+        
         save_model_and_result(dt_string, epoch, train_loss, test_loss, best_iou,
                               recall, precision, save_mIoU_dir, save_other_metric_dir)
+        
+        # Save COCO JSON format results (BBox metrics as primary now)
+        from model.coco_format import save_results_coco_json
+        save_results_coco_json(
+            'result/' + save_dir,
+            save_prefix,
+            epoch,
+            mean_iou,
+            recall,
+            precision,
+            None,  # Don't pass pixel-based recall/precision anymore
+            None,
+            bbox_mAP_score,
+            test_loss,
+            train_loss,
+            create_plots=True,
+            use_bbox_as_primary=True
+        )
+        
         save_ckpt({
             'epoch': epoch,
             'state_dict': net,
             'loss': test_loss,
-            'mean_IOU': mean_IOU,
+            'best_metric': best_iou,
         }, save_path='result/' + save_dir,
             filename='mIoU_' + '_' + save_prefix + '_epoch' + '.pth.tar')
 
-def save_result_for_test(dataset_dir, st_model, epochs, best_iou, recall, precision ):
-    with open(dataset_dir + '/' + 'value_result'+'/' + st_model +'_best_IoU.log', 'a') as f:
+def save_result_for_test(dataset_dir, st_model, epochs, best_metric, recall, precision, bbox_recall=None, bbox_precision=None, bbox_mAP=None):
+    with open(dataset_dir + '/' + 'value_result'+'/' + st_model +'_best_metric.log', 'a') as f:
         now = datetime.now()
         dt_string = now.strftime("%d/%m/%Y %H:%M:%S")
-        f.write('{} - {:04d}:\t{:.4f}\n'.format(dt_string, epochs, best_iou))
+        f.write('{} - {:04d}:\t{:.4f}\n'.format(dt_string, epochs, best_metric))
 
     with open(dataset_dir + '/' +'value_result'+'/'+ st_model + '_best_other_metric.log', 'a') as f:
+        now = datetime.now()
+        dt_string = now.strftime("%d/%m/%Y %H:%M:%S")
         f.write(dt_string)
         f.write('-')
         f.write(str(epochs))
         f.write('\n')
-        f.write('Recall-----:')
+        f.write('===== BOUNDING BOX METRICS (PRIMARY - IoU=0.1) =====\n')
+        f.write('BBox_Recall:')
         for i in range(len(recall)):
             f.write('   ')
             f.write(str(round(recall[i], 8)))
             f.write('   ')
         f.write('\n')
 
-        f.write('Precision--:')
+        f.write('BBox_Precision:')
         for i in range(len(precision)):
             f.write('   ')
             f.write(str(round(precision[i], 8)))
             f.write('   ')
         f.write('\n')
+        
+        if bbox_mAP is not None:
+            f.write('BBox_mAP: ')
+            f.write(str(round(bbox_mAP, 8)))
+            f.write('\n')
     return
 
 def init_weights(net, init_type='normal'):

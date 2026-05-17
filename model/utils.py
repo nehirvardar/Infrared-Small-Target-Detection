@@ -242,47 +242,55 @@ def save_model_and_result(dt_string, epoch,train_loss, test_loss, best_metric, r
             f.write(str(round(bbox_mAP, 8)))
             f.write('\n')
 
-def save_model(best_metric, best_iou, save_dir, save_prefix, train_loss, test_loss, recall, precision, epoch, net, bbox_mAP_score=None, mean_iou=None):
-    if best_metric > best_iou:
-        save_mIoU_dir = 'result/' + save_dir + '/' + save_prefix + '_best_IoU_IoU.log'
-        save_other_metric_dir = 'result/' + save_dir + '/' + save_prefix + '_best_IoU_other_metric.log'
+def save_model(current_mAP, best_mAP, save_dir, save_prefix, train_loss, test_loss, recall, precision, epoch, net, mean_iou=None):
+    if current_mAP > best_mAP:
+        save_mAP_dir = 'result/' + save_dir + '/' + save_prefix + '_best_mAP.log'
+        save_other_metric_dir = 'result/' + save_dir + '/' + save_prefix + '_best_metrics.log'
         value_result_dir = 'result/' + save_dir + '/value_result'
+        
+        from datetime import datetime
+        import os
+        
         now = datetime.now()
         dt_string = now.strftime("%d/%m/%Y %H:%M:%S")
-        best_iou = best_metric
         
-        # Create value_result directory if not exists
-        import os
         os.makedirs(value_result_dir, exist_ok=True)
         
-        save_model_and_result(dt_string, epoch, train_loss, test_loss, best_iou,
-                              recall, precision, save_mIoU_dir, save_other_metric_dir)
+        # 1. Metin log dosyalarına kaydet
+        save_model_and_result(dt_string, epoch, train_loss, test_loss, current_mAP,
+                              recall, precision, save_mAP_dir, save_other_metric_dir, bbox_mAP=current_mAP)
         
-        # Save COCO JSON format results (BBox metrics as primary now)
+        # 2. COCO JSON Formatında Kaydet
         from model.coco_format import save_results_coco_json
         save_results_coco_json(
             'result/' + save_dir,
-            save_prefix,
+            f'coco_{save_prefix}', 
             epoch,
             mean_iou,
             recall,
             precision,
-            None,  # Don't pass pixel-based recall/precision anymore
+            None,  
             None,
-            bbox_mAP_score,
+            current_mAP,
             test_loss,
             train_loss,
             create_plots=True,
             use_bbox_as_primary=True
         )
         
+        # 3. Model ağırlıklarını .pth.tar olarak kaydet
         save_ckpt({
             'epoch': epoch,
             'state_dict': net,
             'loss': test_loss,
-            'best_metric': best_iou,
+            'best_mAP': current_mAP,
+            'mean_iou': mean_iou
         }, save_path='result/' + save_dir,
-            filename='mIoU_' + '_' + save_prefix + '_epoch' + '.pth.tar')
+            filename=f'Best_mAP_{current_mAP:.4f}_{save_prefix}_epoch{epoch}.pth.tar')
+        
+        return current_mAP 
+    
+    return best_mAP
 
 def save_result_for_test(dataset_dir, st_model, epochs, best_metric, recall, precision, bbox_recall=None, bbox_precision=None, bbox_mAP=None):
     with open(dataset_dir + '/' + 'value_result'+'/' + st_model +'_best_metric.log', 'a') as f:
@@ -465,3 +473,25 @@ def str2bool(v):
         return False
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
+    
+class EarlyStopping:
+    
+    def __init__(self, patience=15, min_delta=0.0):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+
+    def __call__(self, current_mAP):
+        if self.best_score is None:
+            self.best_score = current_mAP
+        elif current_mAP <= self.best_score + self.min_delta:
+            self.counter += 1
+            print(f"\n[EarlyStopping] Uyarı: Skor artmadı! Kalan hak: {self.patience - self.counter} (Mevcut En İyi: {self.best_score:.4f})")
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            print(f"\n[EarlyStopping] Harika! Skor gelişti ({self.best_score:.4f} -> {current_mAP:.4f}). Sayaç sıfırlandı.")
+            self.best_score = current_mAP
+            self.counter = 0

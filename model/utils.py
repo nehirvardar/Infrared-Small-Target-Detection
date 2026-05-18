@@ -278,12 +278,12 @@ def save_model(current_mAP, best_mAP, save_dir, save_prefix, train_loss, test_lo
     return best_mAP
 
 def save_result_for_test(dataset_dir, st_model, epochs, best_metric, recall, precision, bbox_recall=None, bbox_precision=None, bbox_mAP=None):
-    with open(dataset_dir + '/' + 'value_result'+'/' + st_model +'_best_metric.log', 'a') as f:
+    with open(dataset_dir + '/' + 'value_result'+'/' + st_model +'_best_metric.log', 'w') as f:
         now = datetime.now()
         dt_string = now.strftime("%d/%m/%Y %H:%M:%S")
         f.write('{} - {:04d}:\t{:.4f}\n'.format(dt_string, epochs, best_metric))
 
-    with open(dataset_dir + '/' +'value_result'+'/'+ st_model + '_best_other_metric.log', 'a') as f:
+    with open(dataset_dir + '/' + 'value_result'+'/'+ st_model + '_best_other_metric.log', 'w') as f:
         now = datetime.now()
         dt_string = now.strftime("%d/%m/%Y %H:%M:%S")
         f.write(dt_string)

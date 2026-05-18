@@ -149,6 +149,7 @@ class Trainer(object):
             
             # Save COCO JSON format results using pycocotools
             self.BBox.save_final_json(dataset_dir, args.st_model)
+            self.BBox.save_pr_curve(dataset_dir, args.st_model)
 
 
 def main(args):

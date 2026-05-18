@@ -43,7 +43,7 @@ class Trainer(object):
 
         # Read image index from TXT
         if args.mode    == 'TXT':
-            dataset_dir = args.root + '/' + args.dataset
+            dataset_dir = args.root + args.dataset
             train_img_ids, val_img_ids, test_txt=load_dataset(args.root, args.dataset,args.split_method)
 
         # Preprocess and load data
@@ -122,11 +122,6 @@ class Trainer(object):
         tbar = tqdm(self.test_data)
         losses = AverageMeter()
 
-        # defaults (used in smoke mode when loop may break early)
-        recall = np.zeros(11)
-        precision = np.zeros(11)
-        bbox_recall = np.zeros(11)
-        bbox_precision = np.zeros(11)
         mean_IOU = 0.0
 
         # ===================== FPS Measurement =====================
@@ -174,6 +169,26 @@ class Trainer(object):
                 self.BBox.update(pred, labels, batch_img_ids)
                 self.mIoU. update(pred, labels)
                 self.PD_FA.update(pred, labels)
+
+                # --- BOUNDING BOX ÇİZİMİ BAŞLANGICI ---
+
+                # if i < 20:  # Sadece ilk 20 batch'i kaydet
+                #     os.makedirs("bbox_images", exist_ok=True)
+                #     for b in range(data.size(0)):
+                #         img_id_str = str(batch_img_ids[b])
+                #         numeric_part = "".join(filter(str.isdigit, img_id_str))
+                #         img_id_int = int(numeric_part) if numeric_part else abs(hash(img_id_str)) % (10 ** 8)
+                #
+                #         # Resmi normal haline (0-1 arası RGB) geri döndür
+                #         img_np = data[b].cpu().numpy().transpose(1, 2, 0)
+                #         img_np = img_np * np.array([.229, .224, .225]) + np.array([.485, .456, .406])
+                #         img_np = np.clip(img_np, 0, 1)
+                #
+                #         curr_preds = [p for p in self.BBox.predictions if p['image_id'] == img_id_int]
+                #         curr_gts = [a for a in self.BBox.annotations if a['image_id'] == img_id_int]
+                #
+                #         save_path = "bbox_images" + "/" + f"{img_id_str}_bbox.png"
+                #         visualize_predictions(img_np, curr_preds, curr_gts, score_thresh=0.3, save_path=save_path)
 
                 # bbox_recall, bbox_precision = self.BBox.get()
                 _, mean_IOU = self.mIoU.get()
@@ -244,6 +259,7 @@ class Trainer(object):
 
             # Save COCO JSON format results using pycocotools
             self.BBox.save_final_json(dataset_dir, f'coco_results_{args.model}')
+            self.BBox.save_pr_curve(dataset_dir, f'coco_results_{args.model}')
 
 
             # =====================================================================

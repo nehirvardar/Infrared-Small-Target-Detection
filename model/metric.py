@@ -1,4 +1,6 @@
 import  numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 import torch.nn as nn
 import torch
 from skimage import measure
@@ -8,6 +10,8 @@ import os
 import tempfile
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
+
+
 class ROCMetric():
     """Computes pixAcc and mIoU metric scores
     """
@@ -249,49 +253,33 @@ class BoundingBoxMetric():
         self.fn_arr = np.zeros(self.bins+1)
 
     def update(self, preds, labels):
-        # preds and labels have shape (B, 1, H, W)
-        for iBin in range(self.bins+1):
-            score_thresh = (iBin + 0.0) / self.bins
-            predits = (torch.sigmoid(preds) > score_thresh).cpu().numpy().astype('int64')
-            labelss = (labels > 0).cpu().numpy().astype('int64')
-            
-            batch_size = predits.shape[0]
-            for b in range(batch_size):
-                # Handle possible varying tensor shapes
-                if len(predits.shape) == 4:
-                    pred_img = predits[b, 0, :, :]
-                    label_img = labelss[b, 0, :, :]
-                elif len(predits.shape) == 3:
-                    pred_img = predits[b, :, :]
-                    label_img = labelss[b, :, :]
-                else:
-                    pred_img = predits
-                    label_img = labelss
+        matched_preds = set()
+        matched_labels = set()
 
-                image = measure.label(pred_img, connectivity=2)
-                coord_image = measure.regionprops(image)
-                
-                label_l = measure.label(label_img, connectivity=2)
-                coord_label = measure.regionprops(label_l)
-                
-                matched_preds = set()
-                matched_labels = set()
-                
-                for i_gt, props_gt in enumerate(coord_label):
-                    bbox_gt = props_gt.bbox
-                    for i_pred, props_pred in enumerate(coord_image):
-                        if i_pred in matched_preds:
-                            continue
-                        bbox_pred = props_pred.bbox
-                        iou = bbox_iou(bbox_pred, bbox_gt)
-                        if iou >= self.iou_thresh:
-                            matched_preds.add(i_pred)
-                            matched_labels.add(i_gt)
-                            break  # Move to next GT
-                            
-                self.tp_arr[iBin] += len(matched_preds)
-                self.fp_arr[iBin] += len(coord_image) - len(matched_preds)
-                self.fn_arr[iBin] += len(coord_label) - len(matched_labels)
+        for i_gt, props_gt in enumerate(coord_label):
+            bbox_gt = props_gt.bbox
+            best_iou = -1.0
+            best_pred_idx = -1
+
+            for i_pred, props_pred in enumerate(coord_image):
+                if i_pred in matched_preds:
+                    continue
+                bbox_pred = props_pred.bbox
+                iou = bbox_iou(bbox_pred, bbox_gt)
+
+
+                if iou >= self.iou_thresh and iou > best_iou:
+                    best_iou = iou
+                    best_pred_idx = i_pred
+
+            if best_pred_idx != -1:
+                matched_preds.add(best_pred_idx)
+                matched_labels.add(i_gt)
+
+        # TP, FP, FN calculate
+        self.tp_arr[iBin] += len(matched_preds)
+        self.fp_arr[iBin] += len(coord_image) - len(matched_preds)
+        self.fn_arr[iBin] += len(coord_label) - len(matched_labels)
 
     def get(self):
         precision = self.tp_arr / (self.tp_arr + self.fp_arr + 1e-6)
@@ -303,8 +291,50 @@ class BoundingBoxMetric():
         self.fp_arr = np.zeros(self.bins+1)
         self.fn_arr = np.zeros(self.bins+1)
 
+def visualize_predictions(image_array, predictions, ground_truths=None, score_thresh=0.5, save_path=None):
+
+    fig, ax = plt.subplots(1, figsize=(8, 8))
+
+    # Resmi ekrana bas (siyah beyaz veya renkli duruma göre cmap ayarla)
+    if len(image_array.shape) == 2:
+        ax.imshow(image_array, cmap='gray')
+    else:
+        ax.imshow(image_array)
+
+    # 1. Gerçek Hedefleri (Ground Truth) Çiz (YEŞİL)
+    if ground_truths is not None:
+        for gt in ground_truths:
+            x, y, w, h = gt['bbox']
+            # Yeşil, biraz daha kalın ve kesik çizgili bir kutu
+            rect = patches.Rectangle((x, y), w, h, linewidth=2, edgecolor='green', facecolor='none', linestyle='--')
+            ax.add_patch(rect)
+            ax.text(x, y - 2, 'GT', color='green', fontsize=10, weight='bold')
+
+    # 2. Modelin Tahminlerini Çiz (KIRMIZI)
+    for pred in predictions:
+        score = pred.get('score', 1.0)
+
+        if score >= score_thresh:
+            x, y, w, h = pred['bbox']
+
+            rect = patches.Rectangle((x, y), w, h, linewidth=2, edgecolor='red', facecolor='none')
+            ax.add_patch(rect)
+
+            ax.text(x, y - 2, f'{score:.2f}', color='red', fontsize=10, weight='bold', backgroundcolor='white')
+
+    plt.axis('off')
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight', dpi=150)
+        print(f"Görsel kaydedildi: {save_path}")
+    else:
+        plt.show()
+
+    plt.close(fig)
+
 class COCOEvaluator():
-    def __init__(self, iou_thresh=0.1, score_thresh=0.5):
+    def __init__(self, iou_thresh=0.1, score_thresh=0.1):
         self.iou_thresh = iou_thresh
         self.score_thresh = score_thresh
         
@@ -404,21 +434,45 @@ class COCOEvaluator():
         try:
             coco_gt = COCO(gt_path)
             coco_dt = coco_gt.loadRes(pred_path)
-            
             coco_eval = COCOeval(coco_gt, coco_dt, "bbox")
+            coco_eval.params.maxDets = [1, 5, 10]
             coco_eval.params.iouThrs = np.array([self.iou_thresh])
             coco_eval.evaluate()
             coco_eval.accumulate()
             coco_eval.summarize()
             
             map_score = float(coco_eval.stats[0])
-            recall = float(coco_eval.stats[8])
-            
-            precisions = coco_eval.eval["precision"]
-            valid_precisions = precisions[0, :, 0, 0, -1] 
-            valid_precisions = valid_precisions[valid_precisions > -1]
-            if len(valid_precisions) > 0:
-                best_precision = float(valid_precisions[-1])
+
+            # Precision & recall at score_thresh operating point.
+            # eval_img['npig'] is NOT in standard pycocotools dicts → KeyError.
+            # Use len(self.annotations) for n_gt and filter to "all" area range
+            # to avoid counting the same detection 4x (once per COCO area range).
+            n_gt = len(self.annotations)
+            tp, fp = 0, 0
+            all_aRng = coco_eval.params.areaRng[0]  # [0, 1e10] = "all"
+
+            for eval_img in coco_eval.evalImgs:
+                if eval_img is None:
+                    continue
+                if eval_img['aRng'] != all_aRng:
+                    continue
+                if not eval_img['dtScores']:
+                    continue
+                scores     = eval_img['dtScores']   # list, sorted descending
+                dt_matches = eval_img['dtMatches']  # ndarray (T, D)
+                dt_ignore  = eval_img['dtIgnore']   # ndarray (T, D)
+                for j in range(len(scores)):
+                    if scores[j] < self.score_thresh:
+                        continue
+                    if dt_ignore[0, j]:
+                        continue
+                    if dt_matches[0, j] > 0:
+                        tp += 1
+                    else:
+                        fp += 1
+
+            best_precision = tp / (tp + fp + 1e-6) if (tp + fp) > 0 else 0.0
+            recall         = tp / (n_gt + 1e-6) if n_gt > 0 else 0.0
                 
         except Exception as e:
             print(f"Error during COCO evaluation: {e}")
@@ -457,3 +511,70 @@ class COCOEvaluator():
         with open(pred_path, 'w') as f:
             json.dump(self.predictions, f)
         print(f"Saved COCO GT to {gt_path} and Preds to {pred_path}")
+
+    def save_pr_curve(self, save_dir, file_prefix):
+        """Compute PR curve at iou_thresh and save as PNG alongside COCO JSONs."""
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+
+        if len(self.predictions) == 0:
+            print("No predictions — PR curve not saved.")
+            return
+
+        gt_json = {"images": self.images, "annotations": self.annotations, "categories": self.categories}
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as gt_file:
+            json.dump(gt_json, gt_file)
+            gt_path = gt_file.name
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as pred_file:
+            json.dump(self.predictions, pred_file)
+            pred_path = pred_file.name
+
+        try:
+            coco_gt = COCO(gt_path)
+            coco_dt = coco_gt.loadRes(pred_path)
+            coco_eval = COCOeval(coco_gt, coco_dt, "bbox")
+            coco_eval.params.iouThrs = np.array([self.iou_thresh])
+            coco_eval.evaluate()
+            coco_eval.accumulate()
+
+            # precision shape: (T, R, K, A, M)
+            # indices: T=0 (IoU=iou_thresh), R=all 101 recall pts, K=0 (cat), A=0 (area=all), M=2 (maxDets=100)
+            precisions = coco_eval.eval['precision'][0, :, 0, 0, 2]
+            recall_thrs = coco_eval.params.recThrs  # array of 101 values [0..1]
+
+            valid = precisions > -1
+            r = recall_thrs[valid]
+            p = precisions[valid]
+
+            ap = float(np.trapezoid(p, r)) if len(r) > 1 else 0.0
+
+            os.makedirs(save_dir, exist_ok=True)
+
+            fig, ax = plt.subplots(figsize=(7, 5))
+            ax.plot(r, p, color='steelblue', linewidth=2, label=f'AP = {ap:.4f}')
+            ax.fill_between(r, p, alpha=0.15, color='steelblue')
+            ax.set_xlabel('Recall', fontsize=12)
+            ax.set_ylabel('Precision', fontsize=12)
+            ax.set_title(f'Precision-Recall Curve  (IoU = {self.iou_thresh})', fontsize=13)
+            ax.set_xlim([0.0, 1.0])
+            ax.set_ylim([0.0, 1.05])
+            ax.legend(loc='upper right', fontsize=11)
+            ax.grid(True, linestyle='--', alpha=0.5)
+
+            out_path = os.path.join(save_dir, f"{file_prefix}_pr_curve.png")
+            fig.savefig(out_path, bbox_inches='tight', dpi=150)
+            plt.close(fig)
+            print(f"Saved PR curve to {out_path}")
+
+        except Exception as e:
+            print(f"Error saving PR curve: {e}")
+        finally:
+            for p_path in (gt_path, pred_path):
+                if os.path.exists(p_path):
+                    try:
+                        os.remove(p_path)
+                    except:
+                        pass
+

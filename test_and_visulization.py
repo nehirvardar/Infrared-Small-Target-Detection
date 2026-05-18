@@ -15,7 +15,10 @@ from model.utils import *
 from model.metric import *
 from model.loss import *
 from model.load_param_data import  load_dataset, load_param
-from model.coco_format import save_results_coco_json
+
+import cv2
+import json
+import numpy as np
 
 # Model
 from model.model_DNANet import  Res_CBAM_block
@@ -31,7 +34,7 @@ class Trainer(object):
 
         # Initial
         self.args  = args
-        self.BBox  = BoundingBoxMetric(10, iou_thresh=0.1)
+        self.BBox  = COCOEvaluator(iou_thresh=0.1)
         self.PD_FA = PD_FA(1,10)
         self.mIoU  = mIoU(1)
         self.save_prefix = '_'.join([args.model, args.dataset])
@@ -166,14 +169,18 @@ class Trainer(object):
                     break
 
                 losses.    update(loss.item(), pred.size(0))
-                self.BBox. update(pred, labels)
+                batch_size = pred.size(0)
+                batch_img_ids = val_img_ids[num * batch_size : (num + 1) * batch_size]
+                if not batch_img_ids: # fallback if test_batch_size=1 and num logic used directly
+                    batch_img_ids = val_img_ids[num:num+1]
+                self.BBox.update(pred, labels, batch_img_ids)
                 self.mIoU. update(pred, labels)
                 self.PD_FA.update(pred, labels)
 
-                bbox_recall, bbox_precision = self.BBox.get()
+                # bbox_recall, bbox_precision = self.BBox.get()
                 _, mean_IOU = self.mIoU.get()
             FA, PD = self.PD_FA.get(len(val_img_ids))
-            bbox_recall, bbox_precision = self.BBox.get()
+            # bbox_recall, bbox_precision = self.BBox.get()
             test_loss = losses.avg
             scio.savemat(f'final_rapor_{args.model}_{args.dataset}.mat',
                          {'number_record1': FA, 'number_record2': PD})
@@ -183,17 +190,7 @@ class Trainer(object):
             self.best_iou = mean_IOU
 
             # ===================== Compute Final Metrics (BBox-based as PRIMARY) =====================
-            # BBox recall and precision arrays (one per threshold bin)
-            # Take the best (max) value across thresholds as the representative score
-            best_recall    = float(np.max(bbox_recall))
-            best_precision = float(np.max(bbox_precision))
-
-            # mAP score: use the area under precision-recall curve (trapezoidal)
-            # Sort by recall for proper AUC computation
-            bbox_sorted_indices = np.argsort(bbox_recall)
-            bbox_sorted_recall    = bbox_recall[bbox_sorted_indices]
-            bbox_sorted_precision = bbox_precision[bbox_sorted_indices]
-            mAP_score = float(np.trapezoid(bbox_sorted_precision, bbox_sorted_recall))
+            mAP_score, best_precision, best_recall = self.BBox.get()
 
             # FPS (frames per second) and it/s (iterations per second)
             fps = total_samples / total_time if total_time > 0 else 0.0
@@ -241,25 +238,16 @@ class Trainer(object):
 
             print(f"\n>>> CSV report saved to: {csv_path}")
 
-            save_result_for_test(dataset_dir, f'rapor_{args.model}', args.epochs, mAP_score, 
-                     bbox_recall, bbox_precision, None, None, mAP_score)
+            save_result_for_test(dataset_dir, f'rapor_{args.model}', args.epochs, mAP_score,
+                                 bbox_sorted_recall, bbox_sorted_precision, None, None, mAP_score)
             
-            # Save COCO JSON format results (BBox metrics as primary)
-            save_results_coco_json(
-                dataset_dir,
-                f'coco_results_{args.model}',
-                args.epochs,
-                mean_IOU,
-                bbox_recall,
-                bbox_precision,
-                None,
-                None,
-                mAP_score,
-                test_loss,
-                None,
-                create_plots=True,
-                use_bbox_as_primary=True
-            )
+            # Save COCO JSON format results using pycocotools
+            self.BBox.save_final_json(dataset_dir, f'coco_results_{args.model}')
+            
+            # also for save_result_for_test pass dummy arrays for backward compatibility
+            bbox_sorted_recall = [best_recall]
+            bbox_sorted_precision = [best_precision]
+
 
             # =====================================================================
             # OLD VISUALIZATION CODE (commented out, kept for reference)

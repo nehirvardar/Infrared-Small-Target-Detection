@@ -3,6 +3,11 @@ import torch.nn as nn
 import torch
 from skimage import measure
 import  numpy
+import json
+import os
+import tempfile
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
 class ROCMetric():
     """Computes pixAcc and mIoU metric scores
     """
@@ -297,3 +302,151 @@ class BoundingBoxMetric():
         self.tp_arr = np.zeros(self.bins+1)
         self.fp_arr = np.zeros(self.bins+1)
         self.fn_arr = np.zeros(self.bins+1)
+
+class COCOEvaluator():
+    def __init__(self, iou_thresh=0.1, score_thresh=0.5):
+        self.iou_thresh = iou_thresh
+        self.score_thresh = score_thresh
+        
+        self.annotations = []
+        self.images = []
+        self.predictions = []
+        
+        self.ann_id = 1
+        self.cat_id = 1
+        self.categories = [{"id": self.cat_id, "name": "target", "supercategory": "none"}]
+        self.image_ids_seen = set()
+
+    def update(self, preds, labels, img_ids):
+        preds_sigmoid = torch.sigmoid(preds).cpu().numpy()
+        preds_bin = (preds_sigmoid > self.score_thresh).astype(np.uint8)
+        labels_bin = (labels > 0).cpu().numpy().astype(np.uint8)
+        
+        batch_size = preds_sigmoid.shape[0]
+        
+        for b in range(batch_size):
+            img_id_str = str(img_ids[b])
+            try:
+                numeric_part = "".join(filter(str.isdigit, img_id_str))
+                if numeric_part:
+                    img_id_int = int(numeric_part)
+                else:
+                    img_id_int = abs(hash(img_id_str)) % (10 ** 8)
+            except:
+                img_id_int = abs(hash(img_id_str)) % (10 ** 8)
+            
+            while img_id_int in self.image_ids_seen:
+                 img_id_int += 1
+            self.image_ids_seen.add(img_id_int)
+                
+            self.images.append({
+                "id": img_id_int,
+                "file_name": img_id_str + ".png",
+                "width": 256,
+                "height": 256
+            })
+            
+            gt_img = labels_bin[b, 0, :, :] if len(labels_bin.shape) == 4 else (labels_bin[b, :, :] if len(labels_bin.shape) == 3 else labels_bin)
+            gt_labeled = measure.label(gt_img, connectivity=2)
+            for region in measure.regionprops(gt_labeled):
+                min_row, min_col, max_row, max_col = region.bbox
+                width = max_col - min_col
+                height = max_row - min_row
+                self.annotations.append({
+                    "id": self.ann_id,
+                    "image_id": img_id_int,
+                    "category_id": self.cat_id,
+                    "bbox": [min_col, min_row, width, height],
+                    "area": width * height,
+                    "iscrowd": 0
+                })
+                self.ann_id += 1
+                
+            pred_bin_img = preds_bin[b, 0, :, :] if len(preds_bin.shape) == 4 else (preds_bin[b, :, :] if len(preds_bin.shape) == 3 else preds_bin)
+            pred_prob_img = preds_sigmoid[b, 0, :, :] if len(preds_sigmoid.shape) == 4 else (preds_sigmoid[b, :, :] if len(preds_sigmoid.shape) == 3 else preds_sigmoid)
+            
+            pred_labeled = measure.label(pred_bin_img, connectivity=2)
+            for region in measure.regionprops(pred_labeled):
+                min_row, min_col, max_row, max_col = region.bbox
+                width = max_col - min_col
+                height = max_row - min_row
+                mask = (pred_labeled == region.label)
+                score = float(pred_prob_img[mask].max())
+                
+                self.predictions.append({
+                    "image_id": img_id_int,
+                    "category_id": self.cat_id,
+                    "bbox": [min_col, min_row, width, height],
+                    "score": score
+                })
+                
+    def get(self):
+        gt_json = {
+            "images": self.images,
+            "annotations": self.annotations,
+            "categories": self.categories
+        }
+        if len(self.predictions) == 0:
+            return 0.0, 0.0, 0.0
+            
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as gt_file:
+            json.dump(gt_json, gt_file)
+            gt_path = gt_file.name
+            
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as pred_file:
+            json.dump(self.predictions, pred_file)
+            pred_path = pred_file.name
+            
+        map_score = 0.0
+        best_precision = 0.0
+        recall = 0.0
+        
+        try:
+            coco_gt = COCO(gt_path)
+            coco_dt = coco_gt.loadRes(pred_path)
+            
+            coco_eval = COCOeval(coco_gt, coco_dt, "bbox")
+            coco_eval.params.iouThrs = np.array([self.iou_thresh])
+            coco_eval.evaluate()
+            coco_eval.accumulate()
+            coco_eval.summarize()
+            
+            map_score = float(coco_eval.stats[0])
+            recall = float(coco_eval.stats[8])
+            
+            precisions = coco_eval.eval["precision"]
+            valid_precisions = precisions[0, :, 0, 0, -1] 
+            valid_precisions = valid_precisions[valid_precisions > -1]
+            if len(valid_precisions) > 0:
+                best_precision = float(np.max(valid_precisions))
+                
+        except Exception as e:
+            print(f"Error during COCO evaluation: {e}")
+            
+        finally:
+            if os.path.exists(gt_path):
+                try:
+                    os.remove(gt_path)
+                except:
+                    pass
+            if os.path.exists(pred_path):
+                try:
+                    os.remove(pred_path)
+                except:
+                    pass
+                
+        return map_score, best_precision, recall
+
+    def save_final_json(self, save_dir, file_prefix):
+        gt_json = {
+            "images": self.images,
+            "annotations": self.annotations,
+            "categories": self.categories
+        }
+        gt_path = os.path.join(save_dir, f"{file_prefix}_coco_gt.json")
+        pred_path = os.path.join(save_dir, f"{file_prefix}_coco_pred.json")
+        with open(gt_path, 'w') as f:
+            json.dump(gt_json, f)
+        with open(pred_path, 'w') as f:
+            json.dump(self.predictions, f)
+        print(f"Saved COCO GT to {gt_path} and Preds to {pred_path}")

@@ -13,7 +13,7 @@ from model.utils import *
 from model.metric import *
 from model.loss import *
 from model.load_param_data import  load_dataset, load_param
-from model.coco_format import save_results_coco_json
+# from model.coco_format import save_results_coco_json
 
 # model
 from model.model_DNANet import  Res_CBAM_block
@@ -28,7 +28,7 @@ class Trainer(object):
     def __init__(self, args):
         # Initial
         self.args = args
-        self.BBox = BoundingBoxMetric(10, iou_thresh=0.1)
+        self.BBox = COCOEvaluator(iou_thresh=0.1)
         self.mIoU = mIoU(1)
         self.best_mAP = 0.0
         self.save_prefix = '_'.join([args.model, args.dataset])
@@ -42,6 +42,7 @@ class Trainer(object):
         if args.mode == 'TXT':
             dataset_dir = args.root + '/' + args.dataset
             train_img_ids, val_img_ids, test_txt = load_dataset(args.root, args.dataset, args.split_method)
+            self.val_img_ids = val_img_ids
 
         # Preprocess and load data
         input_transform = transforms.Compose([
@@ -153,20 +154,21 @@ class Trainer(object):
                     loss = self.loss_fn(pred, labels)
                 
                 losses.update(loss.item(), pred.size(0))
-                self.BBox.update(pred, labels)
+                batch_size = pred.size(0)
+                batch_img_ids = self.val_img_ids[i * batch_size : (i + 1) * batch_size]
+                if not batch_img_ids:
+                    batch_img_ids = self.val_img_ids[i:i+1] # fallback
+                self.BBox.update(pred, labels, batch_img_ids)
                 self.mIoU.update(pred, labels)
-                
-                bbox_recall, bbox_precision = self.BBox.get()
                 _, mean_IOU = self.mIoU.get()
                 tbar.set_description('Epoch %d, test loss %.4f, mean_IoU: %.4f' % (epoch, losses.avg, mean_IOU ))
             
             test_loss = losses.avg
         
-        # BBox mAP Hesaplaması
-        bbox_sorted_indices = np.argsort(bbox_recall)
-        bbox_sorted_recall    = bbox_recall[bbox_sorted_indices]
-        bbox_sorted_precision = bbox_precision[bbox_sorted_indices]
-        bbox_mAP = float(np.trapz(bbox_sorted_precision, bbox_sorted_recall)) if len(bbox_recall) > 0 else 0.0
+        # BBox mAP Hesaplaması (pycocotools)
+        bbox_mAP, best_precision, best_recall = self.BBox.get()
+        bbox_recall = [best_recall]
+        bbox_precision = [best_precision]
    
         # TensorBoard'a yazdırma
         self.writer.add_scalar('Loss/Test', test_loss, epoch)

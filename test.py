@@ -12,7 +12,7 @@ from model.utils import *
 from model.metric import *
 from model.loss import *
 from model.load_param_data import  load_dataset, load_param
-from model.coco_format import save_results_coco_json
+# from model.coco_format import save_results_coco_json
 
 # Model
 from model.model_DNANet import  Res_CBAM_block
@@ -28,7 +28,7 @@ class Trainer(object):
 
         # Initial
         self.args  = args
-        self.BBox  = BoundingBoxMetric(args.ROC_thr, iou_thresh=0.1)
+        self.BBox  = COCOEvaluator(iou_thresh=0.1)
         self.PD_FA = PD_FA(1,args.ROC_thr)
         self.mIoU  = mIoU(1)
         self.save_prefix = '_'.join([args.model, args.dataset])
@@ -118,18 +118,24 @@ class Trainer(object):
                 num += 1
 
                 losses.    update(loss.item(), pred.size(0))
-                self.BBox. update(pred, labels)
+                batch_size = pred.size(0)
+                batch_img_ids = val_img_ids[num * batch_size : (num + 1) * batch_size]
+                if not batch_img_ids:
+                    batch_img_ids = val_img_ids[num:num+1]
+                self.BBox.update(pred, labels, batch_img_ids)
                 self.mIoU. update(pred, labels)
                 self.PD_FA.update(pred, labels)
 
-                bbox_recall, bbox_precision = self.BBox.get()
+                # bbox_recall, bbox_precision = self.BBox.get()
                 _, mean_IOU = self.mIoU.get()
             FA, PD = self.PD_FA.get(len(val_img_ids))
             scio.savemat(dataset_dir + '/' +  'value_result'+ '/' +args.st_model  + '_PD_FA_' + str(255),
                          {'number_record1': FA, 'number_record2': PD})
 
-            # Calculate mAP scores (BBox-based as primary metric)
-            bbox_mAP = float(np.trapezoid(bbox_precision, bbox_recall)) if len(bbox_recall) > 0 else 0.0
+            # Calculate mAP scores (BBox-based as primary metric) using pycocotools
+            bbox_mAP, best_precision, best_recall = self.BBox.get()
+            bbox_recall = [best_recall]
+            bbox_precision = [best_precision]
 
             # Print results - BBox is now the primary metric
             print("\n" + "="*70)
@@ -144,22 +150,8 @@ class Trainer(object):
                                bbox_recall, bbox_precision,
                                None, None, bbox_mAP)
             
-            # Save COCO JSON format results (BBox metrics as primary)
-            save_results_coco_json(
-                dataset_dir,
-                args.st_model,
-                args.epochs,
-                mean_IOU,
-                bbox_recall,
-                bbox_precision,
-                None,
-                None,
-                bbox_mAP,
-                losses.avg,
-                None,
-                create_plots=True,
-                use_bbox_as_primary=True
-            )
+            # Save COCO JSON format results using pycocotools
+            self.BBox.save_final_json(dataset_dir, args.st_model)
 
 
 def main(args):

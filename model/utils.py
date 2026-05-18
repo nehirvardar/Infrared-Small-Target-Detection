@@ -261,22 +261,7 @@ def save_model(current_mAP, best_mAP, save_dir, save_prefix, train_loss, test_lo
                               recall, precision, save_mAP_dir, save_other_metric_dir, bbox_mAP=current_mAP)
         
         # 2. COCO JSON Formatında Kaydet
-        from model.coco_format import save_results_coco_json
-        save_results_coco_json(
-            'result/' + save_dir,
-            f'coco_{save_prefix}', 
-            epoch,
-            mean_iou,
-            recall,
-            precision,
-            None,  
-            None,
-            current_mAP,
-            test_loss,
-            train_loss,
-            create_plots=True,
-            use_bbox_as_primary=True
-        )
+        # pycocotools evaluation is handled internally and printed. Final JSON saving happens during test phase.
         
         # 3. Model ağırlıklarını .pth.tar olarak kaydet
         save_ckpt({

@@ -437,6 +437,13 @@ class COCOEvaluator():
                 
         return map_score, best_precision, recall
 
+    def reset(self):
+        self.annotations = []
+        self.images = []
+        self.predictions = []
+        self.ann_id = 1
+        self.image_ids_seen = set()
+
     def save_final_json(self, save_dir, file_prefix):
         gt_json = {
             "images": self.images,

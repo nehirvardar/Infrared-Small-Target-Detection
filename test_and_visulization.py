@@ -169,10 +169,8 @@ class Trainer(object):
                     break
 
                 losses.    update(loss.item(), pred.size(0))
-                batch_size = pred.size(0)
-                batch_img_ids = val_img_ids[num * batch_size : (num + 1) * batch_size]
-                if not batch_img_ids: # fallback if test_batch_size=1 and num logic used directly
-                    batch_img_ids = val_img_ids[num:num+1]
+                start = i * args.test_batch_size
+                batch_img_ids = val_img_ids[start : start + pred.size(0)]
                 self.BBox.update(pred, labels, batch_img_ids)
                 self.mIoU. update(pred, labels)
                 self.PD_FA.update(pred, labels)
@@ -238,15 +236,14 @@ class Trainer(object):
 
             print(f"\n>>> CSV report saved to: {csv_path}")
 
-            save_result_for_test(dataset_dir, f'rapor_{args.model}', args.epochs, mAP_score,
-                                 bbox_sorted_recall, bbox_sorted_precision, None, None, mAP_score)
-            
-            # Save COCO JSON format results using pycocotools
-            self.BBox.save_final_json(dataset_dir, f'coco_results_{args.model}')
-            
-            # also for save_result_for_test pass dummy arrays for backward compatibility
             bbox_sorted_recall = [best_recall]
             bbox_sorted_precision = [best_precision]
+
+            save_result_for_test(dataset_dir, f'rapor_{args.model}', args.epochs, mAP_score,
+                                 bbox_sorted_recall, bbox_sorted_precision, None, None, mAP_score)
+
+            # Save COCO JSON format results using pycocotools
+            self.BBox.save_final_json(dataset_dir, f'coco_results_{args.model}')
 
 
             # =====================================================================

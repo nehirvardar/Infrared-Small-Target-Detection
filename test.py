@@ -115,14 +115,11 @@ class Trainer(object):
                 else:
                     pred = self.model(data)
                     loss = self.loss_fn(pred, labels)
-                num += 1
-
                 losses.    update(loss.item(), pred.size(0))
-                batch_size = pred.size(0)
-                batch_img_ids = val_img_ids[num * batch_size : (num + 1) * batch_size]
-                if not batch_img_ids:
-                    batch_img_ids = val_img_ids[num:num+1]
+                start = i * args.test_batch_size
+                batch_img_ids = val_img_ids[start : start + pred.size(0)]
                 self.BBox.update(pred, labels, batch_img_ids)
+                num += 1
                 self.mIoU. update(pred, labels)
                 self.PD_FA.update(pred, labels)
 

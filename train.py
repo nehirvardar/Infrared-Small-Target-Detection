@@ -28,7 +28,7 @@ class Trainer(object):
     def __init__(self, args):
         # Initial
         self.args = args
-        self.BBox = COCOEvaluator(iou_thresh=0.1)
+        self.BBox = COCOEvaluator(iou_thresh=0.1, score_thresh=0.1)
         self.mIoU = mIoU(1)
         self.best_mAP = 0.0
         self.save_prefix = '_'.join([args.model, args.dataset])
@@ -201,20 +201,11 @@ class Trainer(object):
 
 def main(args):
     trainer = Trainer(args)
-    early_stopping = EarlyStopping(patience=15) 
     
     for epoch in range(args.start_epoch, args.epochs):
         trainer.training(epoch)
         
         current_mAP = trainer.testing(epoch)
-        early_stopping(current_mAP)
-        
-        if early_stopping.early_stop:
-            print("="*70)
-            print(f"!!! EARLY STOPPING TETİKLENDİ !!!")
-            print(f"Model {early_stopping.patience} epoch boyunca gelişmediği için eğitim {epoch}. epoch'ta durduruldu.")
-            print("="*70)
-            break  
 
 if __name__ == "__main__":
     args = parse_args()

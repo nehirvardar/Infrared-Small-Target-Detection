@@ -34,7 +34,7 @@ class Trainer(object):
 
         # Initial
         self.args  = args
-        self.BBox  = COCOEvaluator(iou_thresh=0.1)
+        self.BBox  = COCOEvaluator(iou_thresh=0.1, score_thresh=0.1)
         self.PD_FA = PD_FA(1,10)
         self.mIoU  = mIoU(1)
         self.save_prefix = '_'.join([args.model, args.dataset])

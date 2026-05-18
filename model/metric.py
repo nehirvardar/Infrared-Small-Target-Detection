@@ -418,7 +418,7 @@ class COCOEvaluator():
             valid_precisions = precisions[0, :, 0, 0, -1] 
             valid_precisions = valid_precisions[valid_precisions > -1]
             if len(valid_precisions) > 0:
-                best_precision = float(np.max(valid_precisions))
+                best_precision = float(valid_precisions[-1])
                 
         except Exception as e:
             print(f"Error during COCO evaluation: {e}")

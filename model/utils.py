@@ -459,24 +459,3 @@ def str2bool(v):
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
     
-class EarlyStopping:
-    
-    def __init__(self, patience=15, min_delta=0.0):
-        self.patience = patience
-        self.min_delta = min_delta
-        self.counter = 0
-        self.best_score = None
-        self.early_stop = False
-
-    def __call__(self, current_mAP):
-        if self.best_score is None:
-            self.best_score = current_mAP
-        elif current_mAP <= self.best_score + self.min_delta:
-            self.counter += 1
-            print(f"\n[EarlyStopping] Uyarı: Skor artmadı! Kalan hak: {self.patience - self.counter} (Mevcut En İyi: {self.best_score:.4f})")
-            if self.counter >= self.patience:
-                self.early_stop = True
-        else:
-            print(f"\n[EarlyStopping] Harika! Skor gelişti ({self.best_score:.4f} -> {current_mAP:.4f}). Sayaç sıfırlandı.")
-            self.best_score = current_mAP
-            self.counter = 0

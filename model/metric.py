@@ -435,7 +435,6 @@ class COCOEvaluator():
             coco_gt = COCO(gt_path)
             coco_dt = coco_gt.loadRes(pred_path)
             coco_eval = COCOeval(coco_gt, coco_dt, "bbox")
-            coco_eval.params.maxDets = [1, 5, 10]
             coco_eval.params.iouThrs = np.array([self.iou_thresh])
             coco_eval.evaluate()
             coco_eval.accumulate()
@@ -443,10 +442,6 @@ class COCOEvaluator():
             
             map_score = float(coco_eval.stats[0])
 
-            # Precision & recall at score_thresh operating point.
-            # eval_img['npig'] is NOT in standard pycocotools dicts → KeyError.
-            # Use len(self.annotations) for n_gt and filter to "all" area range
-            # to avoid counting the same detection 4x (once per COCO area range).
             n_gt = len(self.annotations)
             tp, fp = 0, 0
             all_aRng = coco_eval.params.areaRng[0]  # [0, 1e10] = "all"

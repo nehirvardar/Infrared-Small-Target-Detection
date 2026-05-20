@@ -1,0 +1,213 @@
+# torch and visulization
+from tqdm             import tqdm
+import torch.optim    as optim
+from torch.optim      import lr_scheduler
+from torchvision      import transforms
+from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import DataLoader
+from model.parse_args_train import  parse_args
+import numpy as np
+
+# metric, loss .etc
+from model.utils import *
+from model.metric import *
+from model.loss import *
+from model.load_param_data import  load_dataset, load_param
+# from model.coco_format import save_results_coco_json
+
+# model
+from model.model_DNANet import  Res_CBAM_block
+from model.model_DNANet import  DNANet
+from model.model_DNANet_vers1 import  DNANet_vers1
+from model.model_DNANet_vers2 import  DNANet_vers2
+from model.model_DNANet_vers3 import  DNANet_vers3
+from model.model_DNANet_vers4 import  DNANet_vers4
+from model.model_DNANet_vers5 import  DNANet_vers5
+
+class Trainer(object):
+    def __init__(self, args):
+        # Initial
+        self.args = args
+        self.BBox = COCOEvaluator(iou_thresh=0.1, score_thresh=0.1)
+        self.mIoU = mIoU(1)
+        self.best_mAP = 0.0
+        self.save_prefix = '_'.join([args.model, args.dataset])
+        self.save_dir    = args.save_dir
+        nb_filter, num_blocks = load_param(args.channel_size, args.backbone)
+        
+        # TensorBoard yazarımız
+        self.writer = SummaryWriter(log_dir=f"runs/{args.model}_{args.dataset}")
+        
+        # Read image index from TXT
+        if args.mode == 'TXT':
+            dataset_dir = args.root + '/' + args.dataset
+            train_img_ids, val_img_ids, test_txt = load_dataset(args.root, args.dataset, args.split_method)
+            self.val_img_ids = val_img_ids
+
+        # Preprocess and load data
+        input_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize([.485, .456, .406], [.229, .224, .225])])
+        trainset        = TrainSetLoader(dataset_dir,img_id=train_img_ids,base_size=args.base_size,crop_size=args.crop_size,transform=input_transform,suffix=args.suffix)
+        testset         = TestSetLoader (dataset_dir,img_id=val_img_ids,base_size=args.base_size, crop_size=args.crop_size, transform=input_transform,suffix=args.suffix)
+        self.train_data = DataLoader(dataset=trainset, batch_size=args.train_batch_size, shuffle=True, num_workers=args.workers,drop_last=True)
+        self.test_data  = DataLoader(dataset=testset,  batch_size=args.test_batch_size, num_workers=args.workers,drop_last=False)
+
+        # Choose and load model (this paper is finished by one GPU)
+        if args.model == 'DNANet':
+            from model.model_DNANet import DNANet, Res_CBAM_block
+            model = DNANet(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block,
+                           num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+
+        elif args.model == 'DNANet_vers1':
+            from model.model_DNANet_vers1 import DNANet_vers1, Res_CBAM_block as Res_CBAM_block_v1
+            model = DNANet_vers1(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block_v1,
+                                 num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+
+        elif args.model == 'DNANet_vers2':
+            from model.model_DNANet_vers2 import DNANet_vers2, Res_CBAM_block as Res_CBAM_block_v2
+            model = DNANet_vers2(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block_v2,
+                                 num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+
+        elif args.model == 'DNANet_vers3':
+            from model.model_DNANet_vers3 import DNANet_vers3, Res_CBAM_block as Res_CBAM_block_v3
+            model = DNANet_vers3(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block_v3,
+                                 num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+
+        elif args.model == 'DNANet_vers4':
+            from model.model_DNANet_vers4 import DNANet_vers4, Res_ECA_block
+            model = DNANet_vers4(num_classes=1, input_channels=args.in_channels, block=Res_ECA_block,
+                                 num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+
+        elif args.model == 'DNANet_vers5':
+            from model.model_DNANet_vers5 import DNANet_vers5, Res_CBAM_block as Res_CBAM_block_v5
+            model = DNANet_vers5(num_classes=1, input_channels=args.in_channels, block=Res_CBAM_block_v5,
+                                 num_blocks=num_blocks, nb_filter=nb_filter, deep_supervision=args.deep_supervision)
+
+        model           = model.cuda()
+        model.apply(weights_init_xavier)
+        print("Model Initializing")
+        self.model      = model
+
+        # Optimizer and lr scheduling
+        if args.optimizer   == 'Adam':
+            self.optimizer  = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
+        elif args.optimizer == 'Adagrad':
+            self.optimizer  = torch.optim.Adagrad(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
+        if args.scheduler   == 'CosineAnnealingLR':
+            self.scheduler  = lr_scheduler.CosineAnnealingLR( self.optimizer, T_max=args.epochs, eta_min=args.min_lr)
+        self.scheduler.step()
+
+        # Loss function
+        if args.loss == 'TverskyLoss':
+            self.loss_fn = TverskyLoss
+        else:
+            self.loss_fn = SoftIoULoss
+
+    # Training
+    def training(self,epoch):
+        tbar = tqdm(self.train_data)
+        self.model.train()
+        losses = AverageMeter()
+        for i, ( data, labels) in enumerate(tbar):
+            data   = data.cuda()
+            labels = labels.cuda()
+            if args.deep_supervision == 'True':
+                preds= self.model(data)
+                loss = 0
+                for pred in preds:
+                    loss += self.loss_fn(pred, labels)
+                loss /= len(preds)
+            else:
+               pred = self.model(data)
+               loss = self.loss_fn(pred, labels)
+            self.optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            self.optimizer.step()
+            losses.update(loss.item(), pred.size(0))
+            tbar.set_description('Epoch %d, training loss %.4f' % (epoch, losses.avg))
+        
+        self.train_loss = losses.avg
+        self.writer.add_scalar('Loss/Train', self.train_loss, epoch)
+
+    # Testing
+    def testing (self, epoch):
+        tbar = tqdm(self.test_data)
+        self.model.eval()
+        self.mIoU.reset()
+        self.BBox.reset()
+        losses = AverageMeter()
+
+        with torch.no_grad():
+            for i, ( data, labels) in enumerate(tbar):
+                data = data.cuda()
+                labels = labels.cuda()
+                if args.deep_supervision == 'True':
+                    preds = self.model(data)
+                    loss = 0
+                    for pred in preds:
+                        loss += self.loss_fn(pred, labels)
+                    loss /= len(preds)
+                    pred =preds[-1]
+                else:
+                    pred = self.model(data)
+                    loss = self.loss_fn(pred, labels)
+                
+                losses.update(loss.item(), pred.size(0))
+                batch_size = pred.size(0)
+                batch_img_ids = self.val_img_ids[i * batch_size : (i + 1) * batch_size]
+                if not batch_img_ids:
+                    batch_img_ids = self.val_img_ids[i:i+1] # fallback
+                self.BBox.update(pred, labels, batch_img_ids)
+                self.mIoU.update(pred, labels)
+                _, mean_IOU = self.mIoU.get()
+                tbar.set_description('Epoch %d, test loss %.4f, mean_IoU: %.4f' % (epoch, losses.avg, mean_IOU ))
+            
+            test_loss = losses.avg
+        
+        # BBox mAP Hesaplaması (pycocotools)
+        bbox_mAP, best_precision, best_recall = self.BBox.get()
+        bbox_recall = [best_recall]
+        bbox_precision = [best_precision]
+   
+        # TensorBoard'a yazdırma
+        self.writer.add_scalar('Loss/Test', test_loss, epoch)
+        self.writer.add_scalar('Metric/BBox_mAP', bbox_mAP, epoch)
+        self.writer.add_scalar('Metric/mIoU', mean_IOU, epoch)
+
+        print("\n" + "="*70)
+        print("===== BOUNDING BOX METRICS (PRIMARY - IoU threshold = 0.1) =====")
+        print(f"Best Recall (BBox-based): {np.max(bbox_recall):.6f}")
+        print(f"Best Precision (BBox-based): {np.max(bbox_precision):.6f}")
+        print(f"mAP Score (BBox-based): {bbox_mAP:.6f}")
+        print(f"Mean IoU (Pixel-level): {mean_IOU:.6f}")
+        print("="*70 + "\n")
+        
+        # save high-performance model 
+        self.best_mAP = save_model(
+            current_mAP=bbox_mAP, 
+            best_mAP=self.best_mAP, 
+            save_dir=self.save_dir, 
+            save_prefix=self.save_prefix,
+            train_loss=self.train_loss, 
+            test_loss=test_loss, 
+            recall=bbox_recall, 
+            precision=bbox_precision, 
+            epoch=epoch, 
+            net=self.model.state_dict(), 
+            mean_iou=mean_IOU
+        )
+        return bbox_mAP
+
+def main(args):
+    trainer = Trainer(args)
+    
+    for epoch in range(args.start_epoch, args.epochs):
+        trainer.training(epoch)
+        
+        current_mAP = trainer.testing(epoch)
+
+if __name__ == "__main__":
+    args = parse_args()
+    main(args)

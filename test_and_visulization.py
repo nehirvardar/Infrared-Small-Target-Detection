@@ -9,6 +9,7 @@ import os
 # Torch and visulization
 from torchvision      import transforms
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 
 # Metric, loss .etc
 from model.utils import *
@@ -115,7 +116,11 @@ class Trainer(object):
         target_dir = 'mask_images_concat'
         make_visulization_dir(target_image_path, target_dir)
 
-        # Load trained model was attempted above; if checkpoint unavailable we continue with init weights
+        # ===================== TensorBoard Writer =====================
+        tb_log_dir = os.path.join('runs', f'test_{args.model}_{args.dataset}')
+        self.writer = SummaryWriter(log_dir=tb_log_dir)
+        print(f"TensorBoard log dizini: {tb_log_dir}")
+        print(f"  --> tensorboard --logdir runs  komutuyla görüntüleyebilirsiniz.")
 
         # Test
         self.model.eval()
@@ -170,27 +175,29 @@ class Trainer(object):
                 self.mIoU. update(pred, labels)
                 self.PD_FA.update(pred, labels)
 
-                # --- BOUNDING BOX ÇİZİMİ BAŞLANGICI ---
+                # ---- TensorBoard BBox Görselleştirme (ilk 20 batch) ----
+                if i < 20:
+                    score_np   = torch.sigmoid(pred).cpu().numpy()   # (B,1,H,W)
+                    pred_bin   = (pred > 0).cpu().numpy()             # (B,1,H,W)
+                    labels_np  = labels.cpu().numpy()                 # (B,1,H,W)
+                    data_np    = data.cpu().numpy()                   # (B,3,H,W)
 
-                # if i < 20:  # Sadece ilk 20 batch'i kaydet
-                #     os.makedirs("bbox_images", exist_ok=True)
-                #     for b in range(data.size(0)):
-                #         img_id_str = str(batch_img_ids[b])
-                #         numeric_part = "".join(filter(str.isdigit, img_id_str))
-                #         img_id_int = int(numeric_part) if numeric_part else abs(hash(img_id_str)) % (10 ** 8)
-                #
-                #         # Resmi normal haline (0-1 arası RGB) geri döndür
-                #         img_np = data[b].cpu().numpy().transpose(1, 2, 0)
-                #         img_np = img_np * np.array([.229, .224, .225]) + np.array([.485, .456, .406])
-                #         img_np = np.clip(img_np, 0, 1)
-                #
-                #         curr_preds = [p for p in self.BBox.predictions if p['image_id'] == img_id_int]
-                #         curr_gts = [a for a in self.BBox.annotations if a['image_id'] == img_id_int]
-                #
-                #         save_path = "bbox_images" + "/" + f"{img_id_str}_bbox.png"
-                #         visualize_predictions(img_np, curr_preds, curr_gts, score_thresh=0.3, save_path=save_path)
+                    for b in range(data.size(0)):
+                        # Resmi denormalize et: (H,W,3) float [0,1]
+                        img_np = data_np[b].transpose(1, 2, 0)
+                        img_np = img_np * np.array([.229, .224, .225]) + np.array([.485, .456, .406])
 
-                # bbox_recall, bbox_precision = self.BBox.get()
+                        # 2-boyutlu maskeleri çıkar
+                        p_mask = pred_bin[b, 0]  if pred_bin.ndim  == 4 else pred_bin[b]
+                        g_mask = labels_np[b, 0] if labels_np.ndim == 4 else labels_np[b]
+                        s_map  = score_np[b, 0]  if score_np.ndim  == 4 else score_np[b]
+
+                        vis_chw = draw_bboxes(img_np, p_mask, g_mask,
+                                              score_map=s_map, score_thresh=0.1)
+
+                        img_tag = f'BBox/{batch_img_ids[b]}'
+                        self.writer.add_image(img_tag, vis_chw, global_step=0)
+
                 _, mean_IOU = self.mIoU.get()
             FA, PD = self.PD_FA.get(len(val_img_ids))
             # bbox_recall, bbox_precision = self.BBox.get()
@@ -260,6 +267,30 @@ class Trainer(object):
             # Save COCO JSON format results using pycocotools
             self.BBox.save_final_json(dataset_dir, f'coco_results_{args.model}')
             self.BBox.save_pr_curve(dataset_dir, f'coco_results_{args.model}')
+
+            # ===================== TensorBoard PR Eğrisi =====================
+            if self.BBox._coco_eval is not None:
+                prec_arr = self.BBox._coco_eval.eval['precision'][0, :, 0, 0, 2]
+                rec_arr  = self.BBox._coco_eval.params.recThrs
+                valid    = prec_arr > -1
+                p_vals   = prec_arr[valid]
+                r_vals   = rec_arr[valid]
+                for idx in range(len(p_vals)):
+                    self.writer.add_scalar(
+                        'PR_Curve/Precision',
+                        float(p_vals[idx]),
+                        int(round(r_vals[idx] * 100))   # x ekseni: recall × 100  (0–100)
+                    )
+
+            # ===================== TensorBoard Scalar Metrikler =====================
+            self.writer.add_scalar('Test/mAP@0.1',   mAP_score,      0)
+            self.writer.add_scalar('Test/Precision',  best_precision, 0)
+            self.writer.add_scalar('Test/Recall',     best_recall,    0)
+            self.writer.add_scalar('Test/mIoU',       mean_IOU,       0)
+            self.writer.add_scalar('Test/FPS',        fps,            0)
+            self.writer.add_scalar('Test/Loss',       test_loss,      0)
+            self.writer.close()
+            print(f"\n>>> TensorBoard kayıtları: {tb_log_dir}")
 
 
             # =====================================================================

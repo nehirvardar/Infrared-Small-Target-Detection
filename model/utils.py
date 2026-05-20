@@ -9,7 +9,8 @@ from datetime import datetime
 import argparse
 import shutil
 from  matplotlib import pyplot as plt
-
+import cv2
+from skimage import measure as sk_measure
 class TrainSetLoader(Dataset):
 
 
@@ -458,4 +459,29 @@ def str2bool(v):
         return False
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
+
+
+def draw_bboxes(img_np, pred_mask, gt_mask, score_map=None, score_thresh=0.1):
+
+
+    vis = (np.clip(img_np, 0, 1) * 255).astype(np.uint8).copy()
+
+    # GT kutular – Yeşil
+    gt_labeled = sk_measure.label(gt_mask.astype(np.uint8), connectivity=2)
+    for region in sk_measure.regionprops(gt_labeled):
+        r0, c0, r1, c1 = region.bbox
+        cv2.rectangle(vis, (c0, r0), (c1, r1), (0, 255, 0), 1)
+
+    # Tahmin kutular – Mavi
+    pred_labeled = sk_measure.label(pred_mask.astype(np.uint8), connectivity=2)
+    for region in sk_measure.regionprops(pred_labeled):
+        r0, c0, r1, c1 = region.bbox
+        score = float(score_map[(pred_labeled == region.label)].max()) if score_map is not None else 1.0
+        if score < score_thresh:
+            continue
+        cv2.rectangle(vis, (c0, r0), (c1, r1), (30, 144, 255), 1)
+        cv2.putText(vis, f"{score:.2f}", (c0, max(r0 - 2, 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.3, (30, 144, 255), 1)
+
+    return vis.transpose(2, 0, 1)  # (C, H, W) — TensorBoard formatı
     

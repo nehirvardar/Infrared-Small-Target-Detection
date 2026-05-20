@@ -272,11 +272,12 @@ class COCOEvaluator():
         self.annotations = []
         self.images = []
         self.predictions = []
-        
+
         self.ann_id = 1
         self.cat_id = 1
         self.categories = [{"id": self.cat_id, "name": "target", "supercategory": "none"}]
         self.image_ids_seen = set()
+        self._coco_eval = None          # get() sonrası önbellek; PR scalar loglaması için
 
     def update(self, preds, labels, img_ids):
         preds_sigmoid = torch.sigmoid(preds).cpu().numpy()
@@ -370,7 +371,8 @@ class COCOEvaluator():
             coco_eval.evaluate()
             coco_eval.accumulate()
             coco_eval.summarize()
-            
+            self._coco_eval = coco_eval   # PR scalar loglaması için sakla
+
             map_score = float(coco_eval.stats[0])
 
             n_gt = len(self.annotations)
@@ -423,6 +425,7 @@ class COCOEvaluator():
         self.predictions = []
         self.ann_id = 1
         self.image_ids_seen = set()
+        self._coco_eval = None
 
     def save_final_json(self, save_dir, file_prefix):
         gt_json = {
@@ -439,7 +442,7 @@ class COCOEvaluator():
         print(f"Saved COCO GT to {gt_path} and Preds to {pred_path}")
 
     def save_pr_curve(self, save_dir, file_prefix):
-        """Compute PR curve at iou_thresh and save as PNG alongside COCO JSONs."""
+        """PR eğrisini hesapla ve PNG olarak kaydet (COCO JSON ile aynı dizine)."""
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt

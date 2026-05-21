@@ -171,28 +171,25 @@ class Trainer(object):
                 self.mIoU. update(pred, labels)
                 self.PD_FA.update(pred, labels)
 
-                # ---- TensorBoard BBox Görselleştirme (ilk 20 batch) ----
-                if i < 20:
-                    score_np   = torch.sigmoid(pred).cpu().numpy()   # (B,1,H,W)
-                    pred_bin   = (pred > 0).cpu().numpy()             # (B,1,H,W)
-                    labels_np  = labels.cpu().numpy()                 # (B,1,H,W)
-                    data_np    = data.cpu().numpy()                   # (B,3,H,W)
+                # ---- TensorBoard BBox + False Negative Görselleştirme (tüm batch'ler) ----
+                score_np   = torch.sigmoid(pred).cpu().numpy()   # (B,1,H,W)
+                pred_bin   = (pred > 0).cpu().numpy()             # (B,1,H,W)
+                labels_np  = labels.cpu().numpy()                 # (B,1,H,W)
+                data_np    = data.cpu().numpy()                   # (B,3,H,W)
 
-                    for b in range(data.size(0)):
-                        # Resmi denormalize et: (H,W,3) float [0,1]
-                        img_np = data_np[b].transpose(1, 2, 0)
-                        img_np = img_np * np.array([.229, .224, .225]) + np.array([.485, .456, .406])
+                for b in range(data.size(0)):
+                    img_np = data_np[b].transpose(1, 2, 0)
+                    img_np = img_np * np.array([.229, .224, .225]) + np.array([.485, .456, .406])
 
-                        # 2-boyutlu maskeleri çıkar
-                        p_mask = pred_bin[b, 0]  if pred_bin.ndim  == 4 else pred_bin[b]
-                        g_mask = labels_np[b, 0] if labels_np.ndim == 4 else labels_np[b]
-                        s_map  = score_np[b, 0]  if score_np.ndim  == 4 else score_np[b]
+                    p_mask = pred_bin[b, 0]  if pred_bin.ndim  == 4 else pred_bin[b]
+                    g_mask = labels_np[b, 0] if labels_np.ndim == 4 else labels_np[b]
+                    s_map  = score_np[b, 0]  if score_np.ndim  == 4 else score_np[b]
 
-                        vis_chw = draw_bboxes(img_np, p_mask, g_mask,
-                                              score_map=s_map, score_thresh=0.1)
+                    vis_chw, fn_chw = draw_bboxes(img_np, p_mask, g_mask,
+                                                  score_map=s_map, score_thresh=0.1)
 
-                        img_tag = f'BBox/{batch_img_ids[b]}'
-                        self.writer.add_image(img_tag, vis_chw, global_step=0)
+                    self.writer.add_image(f'BBox/{batch_img_ids[b]}',      vis_chw, global_step=0)
+                    self.writer.add_image(f'FalseNeg/{batch_img_ids[b]}',  fn_chw,  global_step=0)
 
                 _, mean_IOU = self.mIoU.get()
             FA, PD = self.PD_FA.get(len(val_img_ids))

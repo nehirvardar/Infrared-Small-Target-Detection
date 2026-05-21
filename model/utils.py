@@ -462,17 +462,29 @@ def str2bool(v):
 
 
 def draw_bboxes(img_np, pred_mask, gt_mask, score_map=None, score_thresh=0.1):
+    """
+    Returns (vis_chw, fn_chw) both (C, H, W) uint8 for TensorBoard.
+    vis_chw : GT boxes green, prediction boxes blue.
+    fn_chw  : false-negative GT boxes in red, correctly-hit GT boxes in green.
+    A GT region is a false negative when it has zero overlap with pred_mask.
+    """
+    vis    = (np.clip(img_np, 0, 1) * 255).astype(np.uint8).copy()
+    fn_vis = vis.copy()
 
-
-    vis = (np.clip(img_np, 0, 1) * 255).astype(np.uint8).copy()
-
-    # GT kutular – Yeşil
+    # GT boxes – green on main image; blue=FN / green=hit on FN image
     gt_labeled = sk_measure.label(gt_mask.astype(np.uint8), connectivity=2)
     for region in sk_measure.regionprops(gt_labeled):
         r0, c0, r1, c1 = region.bbox
         cv2.rectangle(vis, (c0, r0), (c1, r1), (0, 255, 0), 1)
+        is_fn = not pred_mask[gt_labeled == region.label].any()
+        fn_color     = (0, 0, 255) if is_fn else (0, 255, 0)
+        fn_thickness = 2           if is_fn else 1
+        cv2.rectangle(fn_vis, (c0, r0), (c1, r1), fn_color, fn_thickness)
+        if is_fn:
+            cv2.putText(fn_vis, "FN", (c0, max(r0 - 2, 8)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
 
-    # Tahmin kutular – Mavi
+    # Prediction boxes – blue on main image only
     pred_labeled = sk_measure.label(pred_mask.astype(np.uint8), connectivity=2)
     for region in sk_measure.regionprops(pred_labeled):
         r0, c0, r1, c1 = region.bbox
@@ -483,5 +495,5 @@ def draw_bboxes(img_np, pred_mask, gt_mask, score_map=None, score_thresh=0.1):
         cv2.putText(vis, f"{score:.2f}", (c0, max(r0 - 2, 8)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.3, (30, 144, 255), 1)
 
-    return vis.transpose(2, 0, 1)  # (C, H, W) — TensorBoard formatı
+    return vis.transpose(2, 0, 1), fn_vis.transpose(2, 0, 1)  # (C,H,W), (C,H,W)
     

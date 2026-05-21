@@ -96,10 +96,6 @@ class Trainer(object):
         self.param_count = count_param(self.model)
         print(f"Model Parameters: {self.param_count:,}")
 
-        # Evaluation metrics
-        self.best_recall    = [0,0,0,0,0,0,0,0,0,0,0]
-        self.best_precision = [0,0,0,0,0,0,0,0,0,0,0]
-
         # Checkpoint
         try:
             checkpoint = torch.load(args.model_dir, weights_only=False)
